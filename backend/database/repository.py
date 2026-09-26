@@ -140,6 +140,82 @@ def get_baseline(db: Session, home_id: str) -> List[Baseline]:
     return db.query(Baseline).filter(Baseline.home_id == home_id).all()
 
 
+def get_baseline_comparison(db: Session, home_id: str, days: int = 7) -> dict:
+    """Return per-day activity vs. historical baseline for the last N days."""
+    from sqlalchemy import func
+
+    now = datetime.utcnow()
+    start_date = now - timedelta(days=days)
+
+    # Actual event counts for the requested window
+    recent_counts = (
+        db.query(
+            func.date(RingEvent.timestamp).label("date"),
+            func.count(RingEvent.id).label("event_count"),
+        )
+        .filter(RingEvent.home_id == home_id, RingEvent.timestamp >= start_date)
+        .group_by(func.date(RingEvent.timestamp))
+        .all()
+    )
+
+    # Flagged pattern counts for the window
+    recent_flags = (
+        db.query(
+            func.date(Pattern.detected_at).label("date"),
+            func.count(Pattern.id).label("flags_count"),
+        )
+        .filter(
+            Pattern.home_id == home_id,
+            Pattern.detected_at >= start_date,
+            Pattern.flagged == True,
+        )
+        .group_by(func.date(Pattern.detected_at))
+        .all()
+    )
+
+    # Historical average (all time, per calendar day)
+    all_daily = (
+        db.query(
+            func.date(RingEvent.timestamp).label("date"),
+            func.count(RingEvent.id).label("event_count"),
+        )
+        .filter(RingEvent.home_id == home_id)
+        .group_by(func.date(RingEvent.timestamp))
+        .all()
+    )
+
+    baseline_avg = (
+        sum(r.event_count for r in all_daily) / len(all_daily) if all_daily else 0
+    )
+
+    counts_by_date = {str(r.date): r.event_count for r in recent_counts}
+    flags_by_date = {str(r.date): r.flags_count for r in recent_flags}
+
+    max_count = max(list(counts_by_date.values()) + [baseline_avg * 1.5, 1])
+
+    days_data = []
+    for i in range(days):
+        day = start_date + timedelta(days=i)
+        date_str = day.strftime("%Y-%m-%d")
+        count = counts_by_date.get(date_str, 0)
+        flags = flags_by_date.get(date_str, 0)
+        days_data.append({
+            "date": date_str,
+            "day_name": day.strftime("%A"),
+            "baseline_activity": round((baseline_avg / max_count) * 100, 1),
+            "actual_activity": round((count / max_count) * 100, 1),
+            "flags_count": flags,
+            "event_count": count,
+        })
+
+    return {
+        "home_id": home_id,
+        "baseline_avg": round(baseline_avg, 1),
+        "period_days": days,
+        "days": days_data,
+    }
+
+
 def load_baselines_into_engine(db: Session, home_id: str, engine) -> int:
     """Hydrate a MotifEngine from stored baselines on startup."""
     rows = get_baseline(db, home_id)

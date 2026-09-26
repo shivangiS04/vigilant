@@ -2,6 +2,7 @@ import { useState } from "react";
 import { EventTimeline } from "./components/EventTimeline";
 import { PatternList } from "./components/PatternCard";
 import { PatternDetail } from "./components/PatternDetail";
+import { BaselineComparison } from "./components/BaselineComparison";
 import { usePatterns } from "./hooks/useEvents";
 
 const HOME_ID = "home_001";
@@ -24,7 +25,7 @@ export default function App() {
       ) : (
         <>
           <nav style={styles.nav}>
-            {["patterns", "events"].map((t) => (
+            {["patterns", "analytics", "events"].map((t) => (
               <button
                 key={t}
                 style={{ ...styles.tab, ...(tab === t ? styles.tabActive : {}) }}
@@ -54,6 +55,7 @@ export default function App() {
                 />
               </>
             )}
+            {tab === "analytics" && <BaselineComparison homeId={HOME_ID} />}
             {tab === "events" && <EventTimeline homeId={HOME_ID} />}
           </main>
         </>

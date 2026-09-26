@@ -1,14 +1,19 @@
-"""Entry point — starts the Ring event simulator + FastAPI server."""
+"""Entry point — starts the Ring event stream (real or simulated) + FastAPI server."""
 
 import asyncio
+import os
 import uvicorn
 from backend.api.routes import app, motif, bedrock
 from backend.ring_integration.api_client import RingAPIClient
+from backend.ring_integration.real_api_client import RealRingClient
 from backend.motif_engine.motif_core import RingEvent as MotifRingEvent
 from backend.database.session import get_db
 from backend.database import repository as repo
+from backend.alexa_integration.client import AlexaClient
 from datetime import datetime
 import uuid
+
+alexa = AlexaClient()
 
 _pending_events: list = []
 SEQUENCE_WINDOW = 5
@@ -84,6 +89,20 @@ async def handle_ring_event(event):
                 repo.upsert_baseline(db, HOME_ID, fingerprint, score.pattern_type)
                 motif.add_baseline(motif_events)
 
+        if score.flagged:
+            alexa.send_alert(HOME_ID, pattern_record)
+
+
+async def run_ring_real(real_client: RealRingClient):
+    """Poll real Ring API every 3 minutes and push events through the pipeline."""
+    POLL_INTERVAL = int(os.getenv("RING_POLL_INTERVAL", "180"))
+    print(f"[Ring] Real API polling every {POLL_INTERVAL}s")
+    while True:
+        events = await real_client.get_events(limit=20)
+        for event in events:
+            await handle_ring_event(event)
+        await asyncio.sleep(POLL_INTERVAL)
+
 
 async def run_ring_simulator():
     client = RingAPIClient.simulator(home_id=HOME_ID)
@@ -101,6 +120,16 @@ async def run_api():
 
 
 async def main():
+    use_simulator = os.getenv("RING_USE_SIMULATOR", "true").lower() != "false"
+
+    if not use_simulator:
+        real_client = RealRingClient.from_env(home_id=HOME_ID)
+        if real_client and await real_client.connect():
+            print("[Ring] Using REAL Ring API")
+            await asyncio.gather(run_ring_real(real_client), run_api())
+            return
+        print("[Ring] Real Ring credentials missing or connection failed — falling back to simulator")
+
     await asyncio.gather(run_ring_simulator(), run_api())
 
 

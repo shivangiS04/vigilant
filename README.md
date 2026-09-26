@@ -97,24 +97,29 @@ vigilant/
 │   │   └── explanation_generator.py ← Builds prompts + calls AWS Bedrock.
 │   │                                  6h cache by pattern type to cut latency.
 │   ├── ring_integration/
-│   │   └── api_client.py           ← Ring event poller + full simulator (fires every 5s).
-│   │                                  No Ring hardware needed to develop.
+│   │   ├── api_client.py           ← Ring event poller + full simulator (fires every 5s).
+│   │   └── real_api_client.py      ← Real Ring API via ring_doorbell library.
+│   │                                  Set RING_USE_SIMULATOR=false + credentials to activate.
+│   ├── alexa_integration/
+│   │   ├── client.py               ← AlexaClient: invokes Lambda on flagged patterns.
+│   │   └── lambda_handler.py       ← Deploy to AWS Lambda (vigilant-alexa-announcer).
 │   ├── database/
 │   │   ├── models.py               ← SQLAlchemy ORM: homes, cameras, events,
 │   │   │                              patterns, baselines (SQLite + Postgres compatible)
 │   │   ├── session.py              ← DB session factory. SQLite default, Postgres via env.
-│   │   └── repository.py           ← All CRUD operations in one place.
+│   │   └── repository.py           ← All CRUD operations + baseline comparison query.
 │   ├── api/
 │   │   └── routes.py               ← FastAPI endpoints. All wired to DB.
-│   └── main.py                     ← Local entry point: simulator + API server together.
+│   └── main.py                     ← Local entry point: real Ring or simulator + API server.
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx                 ← Root. Patterns / Events tabs + detail view routing.
+│   │   ├── App.jsx                 ← Root. Patterns / Analytics / Events tabs.
 │   │   ├── components/
 │   │   │   ├── PatternCard.jsx     ← Clickable card: salience bar + flagged badge.
 │   │   │   ├── PatternDetail.jsx   ← Detail view: score breakdown + explanation.
-│   │   │   └── EventTimeline.jsx   ← Raw Ring event list.
+│   │   │   ├── EventTimeline.jsx   ← Raw Ring event list.
+│   │   │   └── BaselineComparison.jsx ← 7-day activity vs. baseline AreaChart (Recharts).
 │   │   ├── hooks/
 │   │   │   └── useEvents.js        ← useEvents + usePatterns polling hooks (30s interval).
 │   │   └── utils/
@@ -245,6 +250,7 @@ Base URL (prod): `https://vigilant-backend-omega.vercel.app`
 | GET | `/patterns/{id}` | Single pattern with full score breakdown |
 | POST | `/patterns/score` | Score an event sequence on demand |
 | GET | `/baseline?home_id=` | Learned baseline patterns for a home |
+| GET | `/baseline-comparison?home_id=&days=` | 7-day activity vs. historical baseline |
 | POST | `/demo/seed?home_id=` | Seed dashboard with demo data |
 
 ### Score a pattern manually
@@ -261,6 +267,48 @@ curl -X POST https://vigilant-backend-omega.vercel.app/patterns/score \
     ]
   }'
 ```
+
+---
+
+## Real Ring API
+
+By default the backend runs the built-in simulator. To connect to a real Ring account:
+
+1. Install the library (already in `requirements.txt`):
+   ```bash
+   pip install ring-doorbell
+   ```
+
+2. Set env vars (locally in `.env`, or in Vercel dashboard):
+   ```bash
+   RING_USE_SIMULATOR=false
+   RING_EMAIL=your-ring-email@gmail.com
+   RING_PASSWORD=your-ring-password
+   ```
+
+3. Restart the backend — it will attempt real Ring, fall back to simulator on failure.
+
+File: `backend/ring_integration/real_api_client.py`
+
+---
+
+## Alexa Integration
+
+VIGILANT fires an AWS Lambda (`vigilant-alexa-announcer`) whenever a pattern is flagged (salience ≥ 6.0). The Lambda builds a voice message and can be wired to any Alexa Proactive Events endpoint.
+
+**To deploy:**
+
+1. Create a Lambda function named `vigilant-alexa-announcer` (Python 3.11)
+2. Copy `backend/alexa_integration/lambda_handler.py` into the Lambda editor and deploy
+3. Set env vars:
+   ```bash
+   ALEXA_ENABLED=true
+   ALEXA_LAMBDA_FUNCTION=vigilant-alexa-announcer
+   AWS_ACCESS_KEY_ID=...
+   AWS_SECRET_ACCESS_KEY=...
+   ```
+
+The integration silently fails if the Lambda is unavailable — core detection is never blocked.
 
 ---
 
@@ -320,17 +368,18 @@ DATABASE_URL=postgresql://postgres:vigilant@localhost:5432/vigilant
 - [x] Pattern classification (rapid_return, unusual_entrance, delivery, loitering, etc.)
 - [x] Bedrock integration with prompt templates, 6h cache, graceful fallback
 - [x] Ring simulator — realistic events every 5s, no hardware needed
+- [x] **Real Ring API client** — `ring_doorbell` library, env-variable switching, graceful fallback to simulator
 - [x] FastAPI backend fully wired to SQLite/Postgres via SQLAlchemy
-- [x] React dashboard — Patterns + Events tabs, 30s polling
+- [x] React dashboard — Patterns / Analytics / Events tabs, 30s polling
 - [x] Pattern detail view — click any card for score breakdown + explanation
+- [x] **7-day baseline comparison chart** — AreaChart with color-coded dots, flag badges, responsive
+- [x] **Alexa integration** — Lambda function + AlexaClient; fires on every flagged pattern
 - [x] Demo seed endpoint for instant UI testing
 - [x] Vercel deployment — frontend + backend both live
 
 ### Next Up
-- [ ] Real Ring API or `ring_doorbell` library (replace simulator for prod)
-- [ ] 7-day baseline comparison chart on dashboard
-- [ ] Alexa skill integration for voice alerts
-- [ ] Persistent Postgres on Vercel (Supabase/Neon)
+- [ ] Deploy Alexa Lambda to AWS + enable Proactive Events API in skill
+- [ ] Persistent Postgres on Vercel (Supabase/Neon — just set `DATABASE_URL`)
 
 ---
 

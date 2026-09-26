@@ -32,4 +32,7 @@ export const api = {
 
   getBaseline: (homeId = "home_001") =>
     get("/baseline", { home_id: homeId }),
+
+  getBaselineComparison: (homeId = "home_001", days = 7) =>
+    get("/baseline-comparison", { home_id: homeId, days }),
 };

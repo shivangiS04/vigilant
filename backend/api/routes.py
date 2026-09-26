@@ -15,6 +15,7 @@ from backend.motif_engine.motif_core import MotifEngine, RingEvent as MotifRingE
 from backend.bedrock_integration.explanation_generator import ExplanationGenerator
 from backend.database.session import get_db, init_db
 from backend.database import repository as repo
+from backend.alexa_integration.client import AlexaClient
 
 app = FastAPI(title="VIGILANT API", version="0.2.0")
 
@@ -33,6 +34,7 @@ app.add_middleware(
 
 motif = MotifEngine()
 bedrock = ExplanationGenerator()
+alexa = AlexaClient()
 
 
 @app.on_event("startup")
@@ -194,6 +196,13 @@ def score_pattern(req: ScoreRequest):
             repo.upsert_baseline(db, req.home_id, fingerprint, score.pattern_type)
             motif.add_baseline(motif_events)
 
+    if score.flagged:
+        alexa.send_alert(req.home_id, {
+            "pattern_type": score.pattern_type,
+            "explanation": explanation,
+            "salience_score": score.final_salience,
+        })
+
     return ScoreResponse(
         pattern_type=score.pattern_type,
         novelty=score.novelty,
@@ -204,6 +213,16 @@ def score_pattern(req: ScoreRequest):
         flagged=score.flagged,
         explanation=explanation,
     )
+
+
+@app.get("/baseline-comparison")
+def get_baseline_comparison(
+    home_id: str = Query("home_001"),
+    days: int = Query(7, ge=1, le=30),
+):
+    """7-day activity vs. historical baseline."""
+    with get_db() as db:
+        return repo.get_baseline_comparison(db, home_id, days)
 
 
 @app.get("/baseline")
