@@ -24,6 +24,6 @@
     }
   ],
   "env": {
-    "DATABASE_URL": "@vigilant_database_url"
+    "DATABASE_URL": "sqlite:////tmp/vigilant.db"
   }
 }
