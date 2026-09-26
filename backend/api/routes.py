@@ -3,6 +3,7 @@ FastAPI routes for VIGILANT dashboard.
 All state is persisted to SQLite (dev) or Postgres (prod).
 """
 
+import os
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -17,9 +18,15 @@ from backend.database import repository as repo
 
 app = FastAPI(title="VIGILANT API", version="0.2.0")
 
+_ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )
