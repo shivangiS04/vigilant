@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { EventTimeline } from "./components/EventTimeline";
 import { PatternList } from "./components/PatternCard";
+import { PatternDetail } from "./components/PatternDetail";
 import { usePatterns } from "./hooks/useEvents";
 
 const HOME_ID = "home_001";
@@ -8,6 +9,7 @@ const HOME_ID = "home_001";
 export default function App() {
   const [tab, setTab] = useState("patterns");
   const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const [selected, setSelected] = useState(null);
   const { patterns, loading, error } = usePatterns(HOME_ID, 7, flaggedOnly);
 
   return (
@@ -17,51 +19,58 @@ export default function App() {
         <span style={styles.sub}>Behavioral Intelligence for Connected Homes</span>
       </header>
 
-      <nav style={styles.nav}>
-        {["patterns", "events"].map((t) => (
-          <button
-            key={t}
-            style={{ ...styles.tab, ...(tab === t ? styles.tabActive : {}) }}
-            onClick={() => setTab(t)}
-          >
-            {t.charAt(0).toUpperCase() + t.slice(1)}
-          </button>
-        ))}
-      </nav>
+      {selected ? (
+        <PatternDetail pattern={selected} onBack={() => setSelected(null)} />
+      ) : (
+        <>
+          <nav style={styles.nav}>
+            {["patterns", "events"].map((t) => (
+              <button
+                key={t}
+                style={{ ...styles.tab, ...(tab === t ? styles.tabActive : {}) }}
+                onClick={() => setTab(t)}
+              >
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </nav>
 
-      <main style={styles.main}>
-        {tab === "patterns" && (
-          <>
-            <label style={styles.filter}>
-              <input
-                type="checkbox"
-                checked={flaggedOnly}
-                onChange={(e) => setFlaggedOnly(e.target.checked)}
-              />
-              {" "}Show flagged only
-            </label>
-            <PatternList patterns={patterns} loading={loading} error={error} />
-          </>
-        )}
-        {tab === "events" && <EventTimeline homeId={HOME_ID} />}
-      </main>
+          <main style={styles.main}>
+            {tab === "patterns" && (
+              <>
+                <label style={styles.filter}>
+                  <input
+                    type="checkbox"
+                    checked={flaggedOnly}
+                    onChange={(e) => setFlaggedOnly(e.target.checked)}
+                  />
+                  {" "}Show flagged only
+                </label>
+                <PatternList
+                  patterns={patterns}
+                  loading={loading}
+                  error={error}
+                  onSelect={setSelected}
+                />
+              </>
+            )}
+            {tab === "events" && <EventTimeline homeId={HOME_ID} />}
+          </main>
+        </>
+      )}
     </div>
   );
 }
 
 const styles = {
   app: { maxWidth: 720, margin: "0 auto", padding: "0 16px 40px", fontFamily: "sans-serif" },
-  header: { padding: "24px 0 8px", borderBottom: "2px solid #2d3748" },
+  header: { padding: "24px 0 8px", borderBottom: "2px solid #2d3748", marginBottom: 4 },
   logo: { margin: 0, fontSize: 28, letterSpacing: 2, color: "#1a202c" },
   sub: { fontSize: 13, color: "#718096" },
   nav: { display: "flex", gap: 4, padding: "12px 0" },
   tab: {
-    padding: "6px 16px",
-    border: "1px solid #cbd5e0",
-    background: "#fff",
-    borderRadius: 4,
-    cursor: "pointer",
-    fontSize: 14,
+    padding: "6px 16px", border: "1px solid #cbd5e0",
+    background: "#fff", borderRadius: 4, cursor: "pointer", fontSize: 14,
   },
   tabActive: { background: "#2d3748", color: "#fff", borderColor: "#2d3748" },
   main: { paddingTop: 16 },

@@ -8,7 +8,7 @@ function SalienceBar({ score }) {
   );
 }
 
-export function PatternCard({ pattern }) {
+export function PatternCard({ pattern, onSelect }) {
   const time = new Date(pattern.detected_at).toLocaleString([], {
     month: "short",
     day: "numeric",
@@ -20,7 +20,10 @@ export function PatternCard({ pattern }) {
   const scoreColor = score >= 7 ? "#e53e3e" : score >= 4 ? "#dd6b20" : "#38a169";
 
   return (
-    <div style={{ ...styles.card, borderLeft: pattern.flagged ? "4px solid #e53e3e" : "4px solid #eee" }}>
+    <div
+      style={{ ...styles.card, borderLeft: pattern.flagged ? "4px solid #e53e3e" : "4px solid #eee", cursor: onSelect ? "pointer" : "default" }}
+      onClick={() => onSelect && onSelect(pattern)}
+    >
       <div style={styles.header}>
         <span style={styles.type}>{pattern.pattern_type.replace(/_/g, " ")}</span>
         {pattern.flagged && <span style={styles.badge}>FLAGGED</span>}
@@ -41,7 +44,7 @@ export function PatternCard({ pattern }) {
   );
 }
 
-export function PatternList({ patterns, loading, error }) {
+export function PatternList({ patterns, loading, error, onSelect }) {
   if (loading) return <div style={styles.state}>Loading patterns…</div>;
   if (error) return <div style={styles.stateError}>Error: {error}</div>;
   if (!patterns.length) return <div style={styles.state}>No patterns detected yet</div>;
@@ -50,7 +53,7 @@ export function PatternList({ patterns, loading, error }) {
     <div>
       <h2 style={{ fontSize: 16, marginBottom: 8 }}>Detected Patterns</h2>
       {patterns.map((p) => (
-        <PatternCard key={p.id} pattern={p} />
+        <PatternCard key={p.id} pattern={p} onSelect={onSelect} />
       ))}
     </div>
   );

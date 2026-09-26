@@ -103,18 +103,40 @@ class MotifEngine:
     # ------------------------------------------------------------------
 
     def _calculate_novelty(self, fingerprint: str) -> float:
-        """Layer 1 — How different from learned baseline? (0-10)"""
-        if fingerprint not in self.baseline_patterns:
-            return 9.0  # never seen
+        """
+        Layer 1 — How different from learned baseline? (0-10)
 
-        bp = self.baseline_patterns[fingerprint]
-        if bp.count >= 10:
-            return 1.0  # deeply familiar
-        if bp.count >= 5:
-            return 3.0
-        if bp.count >= 2:
-            return 5.0
-        return 7.0  # seen once before
+        Uses Jaccard similarity on fingerprint tokens so near-misses
+        (e.g. same cameras, slightly different time bucket) score lower
+        novelty than completely unseen sequences.
+        """
+        if not self.baseline_patterns:
+            return 9.0
+
+        # exact match first
+        if fingerprint in self.baseline_patterns:
+            bp = self.baseline_patterns[fingerprint]
+            if bp.count >= 10:
+                return 1.0
+            if bp.count >= 5:
+                return 3.0
+            if bp.count >= 2:
+                return 5.0
+            return 7.0
+
+        # fuzzy: find best Jaccard similarity across all baseline fingerprints
+        query_tokens = set(fingerprint.split("|"))
+        best_similarity = 0.0
+        for fp in self.baseline_patterns:
+            baseline_tokens = set(fp.split("|"))
+            intersection = len(query_tokens & baseline_tokens)
+            union = len(query_tokens | baseline_tokens)
+            sim = intersection / union if union else 0.0
+            if sim > best_similarity:
+                best_similarity = sim
+
+        # sim=1.0 → novelty 1, sim=0.0 → novelty 9
+        return round(9.0 - (best_similarity * 8.0), 1)
 
     def _calculate_adaptation(self, fingerprint: str) -> float:
         """Layer 2 — Sensory adaptation: how often seen? (0-10)"""

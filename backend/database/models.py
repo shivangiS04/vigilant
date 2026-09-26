@@ -1,5 +1,5 @@
 """
-PostgreSQL schema via SQLAlchemy ORM.
+SQLAlchemy ORM — works with SQLite (dev) and PostgreSQL (prod).
 
 Tables:
   homes       — one row per home
@@ -12,9 +12,9 @@ Tables:
 from datetime import datetime
 from sqlalchemy import (
     Column, String, Float, Boolean, Integer,
-    DateTime, ForeignKey, ARRAY, Text, Index, create_engine
+    DateTime, ForeignKey, Text, Index, create_engine, JSON
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.orm import declarative_base, relationship, Session
 
 Base = declarative_base()
@@ -60,7 +60,7 @@ class RingEvent(Base):
     type = Column(String, nullable=False)           # person_detected | motion_detected | …
     confidence = Column(Float, default=1.0)
     timestamp = Column(DateTime, nullable=False, index=True)
-    raw_payload = Column(JSONB)                     # original Ring event JSON
+    raw_payload = Column(JSON)                      # original Ring event JSON
     created_at = Column(DateTime, default=datetime.utcnow)
 
     home = relationship("Home", back_populates="events")
@@ -78,7 +78,7 @@ class Pattern(Base):
     home_id = Column(String, ForeignKey("homes.id"), nullable=False)
     pattern_type = Column(String, nullable=False)   # rapid_return | unusual_entrance | …
     fingerprint = Column(String)                    # MOTIF fingerprint hash
-    event_ids = Column(ARRAY(String))               # ordered list of ring_event IDs
+    event_ids = Column(JSON)                        # ordered list of ring_event IDs
     novelty_score = Column(Float)
     adaptation_score = Column(Float)
     temporal_weight = Column(Float)
