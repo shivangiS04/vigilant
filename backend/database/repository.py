@@ -6,8 +6,17 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from sqlalchemy.exc import IntegrityError
 
-from backend.database.models import Home, Camera, RingEvent, Pattern, Baseline
+from backend.database.models import (
+    Baseline,
+    Camera,
+    Home,
+    Pattern,
+    RingAccount,
+    RingEvent,
+    RingWebhookReceipt,
+)
 
 
 # ------------------------------------------------------------------
@@ -21,6 +30,76 @@ def get_or_create_home(db: Session, home_id: str, address: str = "Unknown") -> H
         db.add(home)
         db.flush()
     return home
+
+
+def get_ring_account(db: Session, account_id: str) -> Optional[RingAccount]:
+    return db.query(RingAccount).filter(RingAccount.account_id == account_id).first()
+
+
+def get_unclaimed_ring_accounts(db: Session) -> List[RingAccount]:
+    return db.query(RingAccount).filter(RingAccount.status == "unclaimed").all()
+
+
+def save_ring_account(db: Session, account_data: dict) -> RingAccount:
+    account = get_ring_account(db, account_data["account_id"])
+    if account is None:
+        account = RingAccount(account_id=account_data["account_id"])
+        db.add(account)
+
+    account.access_token_encrypted = account_data["access_token_encrypted"]
+    account.refresh_token_encrypted = account_data["refresh_token_encrypted"]
+    account.access_token_expires_at = account_data["access_token_expires_at"]
+    account.partner_user_id = None
+    account.home_id = None
+    account.account_identifier = None
+    account.status = "unclaimed"
+    db.flush()
+    return account
+
+
+def get_webhook_receipt(db: Session, request_id: str) -> Optional[RingWebhookReceipt]:
+    return (
+        db.query(RingWebhookReceipt)
+        .filter(RingWebhookReceipt.request_id == request_id)
+        .first()
+    )
+
+
+def save_webhook_receipt(
+    db: Session, request_id: str, account_id: str, event_id: str
+) -> bool:
+    if get_webhook_receipt(db, request_id):
+        return False
+    db.add(RingWebhookReceipt(request_id=request_id, account_id=account_id, event_id=event_id))
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        return False
+    return True
+
+
+def mark_webhook_processed(db: Session, request_id: str) -> None:
+    receipt = get_webhook_receipt(db, request_id)
+    if receipt:
+        receipt.processed_at = datetime.utcnow()
+
+
+def upsert_camera(db: Session, home_id: str, camera_id: str, name: str) -> Camera:
+    get_or_create_home(db, home_id)
+    camera = db.query(Camera).filter(Camera.id == camera_id).first()
+    if camera is None:
+        camera = Camera(id=camera_id, home_id=home_id, name=name)
+        db.add(camera)
+    else:
+        camera.home_id = home_id
+        camera.name = name
+    db.flush()
+    return camera
+
+
+def get_camera(db: Session, camera_id: str) -> Optional[Camera]:
+    return db.query(Camera).filter(Camera.id == camera_id).first()
 
 
 # ------------------------------------------------------------------
@@ -37,12 +116,16 @@ def save_event(db: Session, event_data: dict) -> RingEvent:
         home_id=event_data["home_id"],
         camera_id=event_data.get("camera_id", event_data.get("camera_name", "unknown")),
         type=event_data["type"],
-        confidence=event_data.get("confidence", 1.0),
+        confidence=event_data.get("confidence"),
         timestamp=datetime.fromisoformat(event_data["timestamp"]),
         raw_payload=event_data,
     )
     db.add(ev)
     return ev
+
+
+def get_ring_event(db: Session, event_id: str) -> Optional[RingEvent]:
+    return db.query(RingEvent).filter(RingEvent.id == event_id).first()
 
 
 def get_events(db: Session, home_id: str, hours: int = 24, limit: int = 50) -> List[RingEvent]:

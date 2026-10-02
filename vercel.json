@@ -15,7 +15,11 @@
   ],
   "routes": [
     {
-      "src": "/(health|events|patterns|baseline|demo)(.*)",
+      "src": "/ring(.*)",
+      "dest": "api/index.py"
+    },
+    {
+      "src": "/(health|events|patterns|baseline|baseline-comparison|demo)(.*)",
       "dest": "api/index.py"
     },
     {

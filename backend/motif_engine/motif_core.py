@@ -9,7 +9,8 @@ class RingEvent:
     camera: str
     type: str          # person_detected, motion_detected, vehicle_detected, doorbell
     timestamp: datetime
-    confidence: float  # 0.0 - 1.0
+    confidence: Optional[float]  # Ring does not provide this for Partner API events
+    event_id: Optional[str] = None
 
 
 @dataclass
