@@ -248,35 +248,37 @@ def get_baseline(home_id: str = Query("home_001")):
 def seed_demo_data(home_id: str = Query("home_001")):
     now = datetime.utcnow()
 
+    h = home_id  # short alias for id prefixing
     demo_events = [
-        {"id": "demo_e1",  "camera_id": "front_door",  "type": "person_detected",  "confidence": 0.95, "timestamp": (now - timedelta(hours=2, minutes=5)).isoformat(),  "home_id": home_id},
-        {"id": "demo_e2",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.91, "timestamp": (now - timedelta(hours=2, minutes=4)).isoformat(),  "home_id": home_id},
-        {"id": "demo_e3",  "camera_id": "driveway",    "type": "vehicle_detected", "confidence": 0.88, "timestamp": (now - timedelta(hours=1, minutes=45)).isoformat(), "home_id": home_id},
-        {"id": "demo_e4",  "camera_id": "side_door",   "type": "person_detected",  "confidence": 0.90, "timestamp": (now - timedelta(hours=1, minutes=30)).isoformat(), "home_id": home_id},
-        {"id": "demo_e5",  "camera_id": "front_door",  "type": "doorbell",         "confidence": 1.00, "timestamp": (now - timedelta(minutes=45)).isoformat(),          "home_id": home_id},
-        {"id": "demo_e6",  "camera_id": "front_door",  "type": "person_detected",  "confidence": 0.93, "timestamp": (now - timedelta(minutes=44)).isoformat(),          "home_id": home_id},
-        {"id": "demo_e7",  "camera_id": "backyard",    "type": "motion_detected",  "confidence": 0.78, "timestamp": (now - timedelta(minutes=20)).isoformat(),          "home_id": home_id},
-        {"id": "demo_e8",  "camera_id": "side_door",   "type": "person_detected",  "confidence": 0.86, "timestamp": (now - timedelta(minutes=8)).isoformat(),           "home_id": home_id},
-        {"id": "demo_e9",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.82, "timestamp": (now - timedelta(minutes=5)).isoformat(),           "home_id": home_id},
-        {"id": "demo_e10", "camera_id": "driveway",    "type": "vehicle_detected", "confidence": 0.85, "timestamp": (now - timedelta(minutes=2)).isoformat(),           "home_id": home_id},
+        {"id": f"{h}_e1",  "camera_id": "front_door",  "type": "person_detected",  "confidence": 0.95, "timestamp": (now - timedelta(hours=2, minutes=5)).isoformat(),  "home_id": home_id},
+        {"id": f"{h}_e2",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.91, "timestamp": (now - timedelta(hours=2, minutes=4)).isoformat(),  "home_id": home_id},
+        {"id": f"{h}_e3",  "camera_id": "driveway",    "type": "vehicle_detected", "confidence": 0.88, "timestamp": (now - timedelta(hours=1, minutes=45)).isoformat(), "home_id": home_id},
+        {"id": f"{h}_e4",  "camera_id": "side_door",   "type": "person_detected",  "confidence": 0.90, "timestamp": (now - timedelta(hours=1, minutes=30)).isoformat(), "home_id": home_id},
+        {"id": f"{h}_e5",  "camera_id": "front_door",  "type": "doorbell",         "confidence": 1.00, "timestamp": (now - timedelta(minutes=45)).isoformat(),          "home_id": home_id},
+        {"id": f"{h}_e6",  "camera_id": "front_door",  "type": "person_detected",  "confidence": 0.93, "timestamp": (now - timedelta(minutes=44)).isoformat(),          "home_id": home_id},
+        {"id": f"{h}_e7",  "camera_id": "backyard",    "type": "motion_detected",  "confidence": 0.78, "timestamp": (now - timedelta(minutes=20)).isoformat(),          "home_id": home_id},
+        {"id": f"{h}_e8",  "camera_id": "side_door",   "type": "person_detected",  "confidence": 0.86, "timestamp": (now - timedelta(minutes=8)).isoformat(),           "home_id": home_id},
+        {"id": f"{h}_e9",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.82, "timestamp": (now - timedelta(minutes=5)).isoformat(),           "home_id": home_id},
+        {"id": f"{h}_e10", "camera_id": "driveway",    "type": "vehicle_detected", "confidence": 0.85, "timestamp": (now - timedelta(minutes=2)).isoformat(),           "home_id": home_id},
     ]
 
     demo_patterns = [
-        {"id": "demo_p1", "home_id": home_id, "pattern_type": "rapid_return",      "fingerprint": "fp1", "salience_score": 8.2, "novelty_score": 9.0, "adaptation_score": 10.0, "temporal_weight": 0.8, "competition_score": 10.0, "flagged": True,  "explanation": "Someone returned home just 8 minutes after leaving — far shorter than the usual 4+ hours — and entered through the side door instead of the front. Worth a quick check.", "detected_at": (now - timedelta(hours=2)).isoformat(), "event_ids": ["demo_e1","demo_e2","demo_e4"]},
-        {"id": "demo_p2", "home_id": home_id, "pattern_type": "delivery",          "fingerprint": "fp2", "salience_score": 5.1, "novelty_score": 5.0, "adaptation_score": 5.0,  "temporal_weight": 0.8, "competition_score": 7.0,  "flagged": False, "explanation": "A vehicle pulled up and a person approached the front door — likely a package delivery around the usual midday window.", "detected_at": (now - timedelta(hours=1, minutes=40)).isoformat(), "event_ids": ["demo_e3","demo_e5","demo_e6"]},
-        {"id": "demo_p3", "home_id": home_id, "pattern_type": "unusual_entrance",  "fingerprint": "fp3", "salience_score": 7.5, "novelty_score": 8.0, "adaptation_score": 9.0,  "temporal_weight": 1.0, "competition_score": 5.0,  "flagged": True,  "explanation": "Activity detected at the side door during an unusual time — this entrance is rarely used and wasn't part of any expected pattern today.", "detected_at": (now - timedelta(minutes=10)).isoformat(), "event_ids": ["demo_e8"]},
-        {"id": "demo_p4", "home_id": home_id, "pattern_type": "standard_activity", "fingerprint": "fp4", "salience_score": 2.8, "novelty_score": 2.0, "adaptation_score": 3.0,  "temporal_weight": 0.8, "competition_score": 3.0,  "flagged": False, "explanation": "Backyard motion — consistent with wind or an animal. No person detected.", "detected_at": (now - timedelta(minutes=22)).isoformat(), "event_ids": ["demo_e7"]},
+        {"id": f"{h}_p1", "home_id": home_id, "pattern_type": "rapid_return",      "fingerprint": "fp1", "salience_score": 8.2, "novelty_score": 9.0, "adaptation_score": 10.0, "temporal_weight": 0.8, "competition_score": 10.0, "flagged": True,  "explanation": "Someone returned home just 8 minutes after leaving — far shorter than the usual 4+ hours — and entered through the side door instead of the front. Worth a quick check.", "detected_at": (now - timedelta(hours=2)).isoformat(), "event_ids": [f"{h}_e1", f"{h}_e2", f"{h}_e4"]},
+        {"id": f"{h}_p2", "home_id": home_id, "pattern_type": "delivery",          "fingerprint": "fp2", "salience_score": 5.1, "novelty_score": 5.0, "adaptation_score": 5.0,  "temporal_weight": 0.8, "competition_score": 7.0,  "flagged": False, "explanation": "A vehicle pulled up and a person approached the front door — likely a package delivery around the usual midday window.", "detected_at": (now - timedelta(hours=1, minutes=40)).isoformat(), "event_ids": [f"{h}_e3", f"{h}_e5", f"{h}_e6"]},
+        {"id": f"{h}_p3", "home_id": home_id, "pattern_type": "unusual_entrance",  "fingerprint": "fp3", "salience_score": 7.5, "novelty_score": 8.0, "adaptation_score": 9.0,  "temporal_weight": 1.0, "competition_score": 5.0,  "flagged": True,  "explanation": "Activity detected at the side door during an unusual time — this entrance is rarely used and wasn't part of any expected pattern today.", "detected_at": (now - timedelta(minutes=10)).isoformat(), "event_ids": [f"{h}_e8"]},
+        {"id": f"{h}_p4", "home_id": home_id, "pattern_type": "standard_activity", "fingerprint": "fp4", "salience_score": 2.8, "novelty_score": 2.0, "adaptation_score": 3.0,  "temporal_weight": 0.8, "competition_score": 3.0,  "flagged": False, "explanation": "Backyard motion — consistent with wind or an animal. No person detected.", "detected_at": (now - timedelta(minutes=22)).isoformat(), "event_ids": [f"{h}_e7"]},
     ]
 
+    seeded_p = 0
     with get_db() as db:
         for e in demo_events:
             repo.save_event(db, e)
         for p in demo_patterns:
-            existing = repo.get_pattern_by_id(db, p["id"])
-            if not existing:
+            if not repo.get_pattern_by_id(db, p["id"]):
                 repo.save_pattern(db, p)
+                seeded_p += 1
 
-    return {"seeded_events": len(demo_events), "seeded_patterns": len(demo_patterns)}
+    return {"seeded_events": len(demo_events), "seeded_patterns": seeded_p}
 
 
 # ------------------------------------------------------------------
