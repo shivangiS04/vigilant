@@ -19,7 +19,9 @@ function EventRow({ event }) {
       <span style={styles.time}>{time}</span>
       <span style={styles.camera}>{event.camera_name.replace(/_/g, " ")}</span>
       <span style={styles.type}>{event.type.replace(/_/g, " ")}</span>
-      <span style={styles.confidence}>{(event.confidence * 100).toFixed(0)}%</span>
+      <span style={styles.confidence}>
+        {event.confidence == null ? "—" : `${(event.confidence * 100).toFixed(0)}%`}
+      </span>
     </div>
   );
 }

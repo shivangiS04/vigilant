@@ -159,7 +159,9 @@ engine = create_engine(DATABASE_URL)
 
 ---
 
-# 🔵 PROMPT A: REAL RING API INTEGRATION
+# 🔵 PROMPT A: REAL RING API INTEGRATION (SUPERSEDED)
+
+> Historical prompt only. Do not follow the legacy authentication or fallback instructions below. Vigilant now uses the official Ring Partner API; follow the setup and endpoint instructions in README.md. Ring account email/password authentication and `ring_doorbell` are not supported.
 
 **Why it matters:** Judges will ask "Does this work with real Ring?" Current simulator is obvious.
 

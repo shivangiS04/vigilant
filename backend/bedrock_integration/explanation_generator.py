@@ -46,10 +46,15 @@ class ExplanationGenerator:
     # ------------------------------------------------------------------
 
     def _build_prompt(self, p: Dict) -> str:
-        events_text = "\n".join(
-            f"  {i+1}. {e['timestamp']}: {e['camera']} - {e['type']} ({e['confidence']*100:.0f}%)"
-            for i, e in enumerate(p.get("events", []))
-        )
+        event_lines = []
+        for i, event in enumerate(p.get("events", [])):
+            confidence = event.get("confidence")
+            confidence_text = f" ({confidence * 100:.0f}%)" if confidence is not None else ""
+            event_lines.append(
+                f"  {i + 1}. {event['timestamp']}: {event['camera']} - "
+                f"{event['type']}{confidence_text}"
+            )
+        events_text = "\n".join(event_lines)
 
         salience = p.get("salience_score", 5)
         if salience > 7:
@@ -58,6 +63,9 @@ class ExplanationGenerator:
             tone = "Informative — use phrases like 'this is different from usual'"
         else:
             tone = "Low-key FYI — use phrases like 'just flagged as slightly unusual'"
+
+        confidence = p.get("confidence")
+        confidence_text = f"{confidence * 100:.0f}%" if confidence is not None else "Not provided"
 
         return f"""CONTEXT:
 You are explaining a behavioral pattern detected at a residential smart home to the homeowner.
@@ -71,7 +79,7 @@ HOME BASELINE:
 
 DETECTED PATTERN:
 - Pattern Type: {p.get('pattern_type', 'unknown')}
-- Detection Confidence: {p.get('confidence', 0) * 100:.0f}%
+- Detection Confidence: {confidence_text}
 - Novelty Score: {p.get('novelty_score', 5):.1f}/10 (how unusual is this?)
 - Salience Score: {salience:.1f}/10 (how important is this?)
 
