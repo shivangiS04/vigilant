@@ -299,9 +299,9 @@ async def ring_token_exchange(request: Request):
     values = await _read_form(request)
     expected_client_id = os.getenv("RING_CLIENT_ID", "")
     supplied_client_id = values.get("client_id")
-    if supplied_client_id and not hmac.compare_digest(
-        str(supplied_client_id), expected_client_id
-    ):
+    if not expected_client_id or not isinstance(supplied_client_id, str):
+        raise HTTPException(status_code=401, detail="Missing Ring client ID")
+    if not hmac.compare_digest(supplied_client_id, expected_client_id):
         raise HTTPException(status_code=401, detail="Unexpected Ring client ID")
     code = values.get("code") or values.get("authorization_code")
     if not isinstance(code, str) or not code:
