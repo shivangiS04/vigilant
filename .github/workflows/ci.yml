@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, ring-live-integration]
   pull_request:
     branches: [main]
 
@@ -28,6 +28,7 @@ jobs:
         env:
           DATABASE_URL: sqlite:///./test_vigilant.db
           RING_USE_SIMULATOR: "true"
+          RING_INTEGRATION_MODE: "simulator"
           ALEXA_ENABLED: "false"
         run: python -m pytest tests/ -v --tb=short
 

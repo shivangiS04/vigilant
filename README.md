@@ -97,9 +97,12 @@ vigilant/
 │   │   └── explanation_generator.py ← Builds prompts + calls AWS Bedrock.
 │   │                                  6h cache by pattern type to cut latency.
 │   ├── ring_integration/
-│   │   ├── api_client.py           ← Ring event poller + full simulator (fires every 5s).
-│   │   └── real_api_client.py      ← Real Ring API via ring_doorbell library.
-│   │                                  Set RING_USE_SIMULATOR=false + credentials to activate.
+│   │   ├── api_client.py           ← Development simulator, only when explicitly selected.
+│   │   ├── official_client.py      ← Official Ring Partner API HTTP/OAuth client.
+│   │   ├── oauth.py                ← Encrypted tokens and one-way account linking.
+│   │   ├── normalization.py        ← Ring webhook/history to Vigilant event mapping.
+│   │   ├── security.py             ← Ring HMAC nonce and webhook signature checks.
+│   │   └── pipeline.py             ← Shared event-to-MOTIF/Bedrock/Alexa pipeline.
 │   ├── alexa_integration/
 │   │   ├── client.py               ← AlexaClient: invokes Lambda on flagged patterns.
 │   │   └── lambda_handler.py       ← Deploy to AWS Lambda (vigilant-alexa-announcer).
@@ -110,7 +113,7 @@ vigilant/
 │   │   └── repository.py           ← All CRUD operations + baseline comparison query.
 │   ├── api/
 │   │   └── routes.py               ← FastAPI endpoints. All wired to DB.
-│   └── main.py                     ← Local entry point: real Ring or simulator + API server.
+│   └── main.py                     ← API server; simulator starts only when explicitly selected.
 │
 ├── frontend/
 │   ├── src/
@@ -165,7 +168,14 @@ pip install -r requirements.txt
 python -m backend.main
 ```
 
-Ring simulator fires every 5 seconds. API is live at `http://localhost:8000`. SQLite DB (`vigilant.db`) is created automatically in the project root.
+Official mode is the default and waits for Ring webhooks; Ring cannot reach localhost without a public HTTPS tunnel. The API is available at `http://localhost:8000`, and SQLite (`vigilant.db`) is created automatically. To run generated events locally, explicitly select simulator mode:
+
+```powershell
+$env:RING_INTEGRATION_MODE = "simulator"
+python -m backend.main
+```
+
+The simulator is never used as an automatic fallback for official Ring mode.
 
 ### 3. Frontend
 
@@ -183,7 +193,7 @@ Dashboard at `http://localhost:3000`.
 curl -X POST "http://localhost:8000/demo/seed"
 ```
 
-Instantly populates 10 events and 4 patterns (2 flagged) so you can see the full UI without waiting for the simulator.
+This endpoint is available only when `RING_INTEGRATION_MODE=simulator`.
 
 ---
 
@@ -270,25 +280,72 @@ curl -X POST https://vigilant-backend-omega.vercel.app/patterns/score \
 
 ---
 
-## Real Ring API
+## Official Ring Partner API
 
-By default the backend runs the built-in simulator. To connect to a real Ring account:
+Vigilant uses Ring's Ring-driven one-way account-linking flow. Ring customers authorize the app and choose devices in the Ring app; Vigilant never requests or stores a Ring email or password. Ring sends a short-lived authorization code to `/ring/token`. Vigilant exchanges it server-to-server, gets the account ID from `/v1/users/me`, and encrypts the access and refresh tokens in the database. The customer then signs into Vigilant at `/ring/link`; after explicit confirmation, Vigilant validates Ring's time-bound HMAC nonce and calls Ring's required app-integration `POST` and `PATCH` operations.
 
-1. Install the library (already in `requirements.txt`):
-   ```bash
-   pip install ring-doorbell
-   ```
+### Ring Developer Portal setup
 
-2. Set env vars (locally in `.env`, or in Vercel dashboard):
-   ```bash
-   RING_USE_SIMULATOR=false
-   RING_EMAIL=your-ring-email@gmail.com
-   RING_PASSWORD=your-ring-password
-   ```
+1. Register a Ring app and select the Cameras and Doorbells access group needed for motion and doorbell events. Complete the Ring developer account verification and app setup required by the Portal.
+2. Copy the `Client ID`, `Client Secret`, and one-time `HMAC Signature Key` into backend-only secret configuration. The HMAC key is used for account-link nonce validation and webhook verification.
+3. Configure the HTTPS endpoints below in the Ring Portal's staging settings, then configure production after deployment. Ring requires all four URLs to be publicly reachable over HTTPS.
 
-3. Restart the backend — it will attempt real Ring, fall back to simulator on failure.
+For the current backend deployment shown above, use:
 
-File: `backend/ring_integration/real_api_client.py`
+| Ring Portal field | HTTPS URL |
+|---|---|
+| Account Link URL | `https://vigilant-backend-omega.vercel.app/ring/link` |
+| App Homepage URL | `https://vigilant-backend-omega.vercel.app/ring` |
+| Token Exchange URL | `https://vigilant-backend-omega.vercel.app/ring/token` |
+| Webhook URL | `https://vigilant-backend-omega.vercel.app/ring/webhook` |
+
+If the backend domain changes, update all four Portal URLs. Do not configure the frontend domain for these backend endpoints.
+
+Ring's public reference says it POSTs the one-time authorization code to the Token Exchange URL and requires exchange within 60 seconds, but does not specify the inbound callback's content type or exact field names on the pages available. `/ring/token` accepts JSON or URL-encoded bodies with `code` or `authorization_code`; verify the actual staging callback shape in the Ring Portal's Test flow before production.
+
+### Backend environment
+
+Set these values in local `.env` or the backend deployment's secret settings. Do not put real credentials in `.env.example` or frontend variables.
+
+```text
+RING_INTEGRATION_MODE=official
+RING_CLIENT_ID=<Ring Developer Portal Client ID>
+RING_CLIENT_SECRET=<Ring Developer Portal Client Secret>
+RING_HMAC_SIGNING_KEY=<Ring Developer Portal HMAC Signature Key>
+RING_TOKEN_ENCRYPTION_KEY=<Fernet key generated for this deployment>
+RING_SESSION_SECRET=<stable random session-signing secret>
+RING_COOKIE_SECURE=true
+VIGILANT_ACCOUNT_EMAIL=<Vigilant account email>
+VIGILANT_ACCOUNT_PASSWORD_HASH=<PBKDF2 hash for the Vigilant account>
+DATABASE_URL=<durable PostgreSQL connection URL>
+HOME_ID=home_001
+```
+
+Generate the token-encryption key and session secret:
+
+```powershell
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Generate a PBKDF2 password hash for the **Vigilant** sign-in used to claim the Ring nonce:
+
+```powershell
+python -c "from getpass import getpass; from backend.ring_integration.partner_auth import create_password_hash; print(create_password_hash(getpass()))"
+```
+
+Use the output as `VIGILANT_ACCOUNT_PASSWORD_HASH`. This is not a Ring password. The current backend foundation supports one configured Vigilant account; connect a full multi-user identity provider before offering account linking to multiple unrelated Vigilant users.
+
+### Local and production behavior
+
+- `RING_INTEGRATION_MODE=official` is the default. It never generates fake Ring events and waits for signed Ring webhooks.
+- `RING_INTEGRATION_MODE=simulator` explicitly enables the local development generator and `/demo/seed`.
+- Ring sends real-time motion and button-press notifications to `/ring/webhook`. Verified events are persisted and normalized, then passed through MOTIF; flagged patterns still use Bedrock and Alexa.
+- Ring does not provide an event confidence value in these webhook payloads, so Vigilant stores and displays confidence as unavailable.
+- Deploy this FastAPI backend before entering its HTTPS URLs in the Portal. Configure a durable PostgreSQL database before enabling real Ring accounts; Vercel's `/tmp` SQLite filesystem is ephemeral and unsuitable for Ring tokens or webhook deduplication.
+- Webhook acknowledgement is separated from MOTIF/Bedrock processing. For production reliability across process restarts, deploy a durable background queue/worker; Ring may retry deliveries, and Vigilant deduplicates them by Ring's `meta.request_id`.
+
+Official endpoint, token, nonce, event and signature behavior is documented at [Ring API Documentation](https://developer.amazon.com/docs/ring/api-documentation.html), [Configure](https://developer.amazon.com/docs/ring/configure.html), and [Getting Started](https://developer.amazon.com/docs/ring/get-started.html).
 
 ---
 
@@ -368,7 +425,7 @@ DATABASE_URL=postgresql://postgres:vigilant@localhost:5432/vigilant
 - [x] Pattern classification (rapid_return, unusual_entrance, delivery, loitering, etc.)
 - [x] Bedrock integration with prompt templates, 6h cache, graceful fallback
 - [x] Ring simulator — realistic events every 5s, no hardware needed
-- [x] **Real Ring API client** — `ring_doorbell` library, env-variable switching, graceful fallback to simulator
+- [x] **Official Ring Partner API foundation** — one-way account linking, signed webhooks, encrypted token storage, no automatic simulator fallback
 - [x] FastAPI backend fully wired to SQLite/Postgres via SQLAlchemy
 - [x] React dashboard — Patterns / Analytics / Events tabs, 30s polling
 - [x] Pattern detail view — click any card for score breakdown + explanation

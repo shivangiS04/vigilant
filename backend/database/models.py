@@ -51,6 +51,33 @@ class Camera(Base):
     events = relationship("RingEvent", back_populates="camera")
 
 
+class RingAccount(Base):
+    __tablename__ = "ring_accounts"
+
+    account_id = Column(String, primary_key=True)
+    partner_user_id = Column(String, index=True)
+    home_id = Column(String, ForeignKey("homes.id"))
+    account_identifier = Column(String)
+    access_token_encrypted = Column(Text, nullable=False)
+    refresh_token_encrypted = Column(Text, nullable=False)
+    access_token_expires_at = Column(DateTime, nullable=False)
+    status = Column(String, nullable=False, default="unclaimed", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    home = relationship("Home")
+
+
+class RingWebhookReceipt(Base):
+    __tablename__ = "ring_webhook_receipts"
+
+    request_id = Column(String, primary_key=True)
+    account_id = Column(String, nullable=False, index=True)
+    event_id = Column(String, nullable=False)
+    received_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    processed_at = Column(DateTime)
+
+
 class RingEvent(Base):
     __tablename__ = "ring_events"
 
@@ -58,7 +85,7 @@ class RingEvent(Base):
     home_id = Column(String, ForeignKey("homes.id"), nullable=False)
     camera_id = Column(String, ForeignKey("cameras.id"), nullable=False)
     type = Column(String, nullable=False)           # person_detected | motion_detected | …
-    confidence = Column(Float, default=1.0)
+    confidence = Column(Float, nullable=True)
     timestamp = Column(DateTime, nullable=False, index=True)
     raw_payload = Column(JSON)                      # original Ring event JSON
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -86,9 +86,8 @@ class RingAPIClient:
 
     async def _fetch_real_events(self) -> List[RingEvent]:
         """
-        Replace with actual Ring API call.
-        Ring doesn't have a public API — use ring_doorbell library or
-        reverse-engineered endpoints. For hackathon, simulator is fine.
+        This development simulator is intentionally not a Ring API client.
+        The official Partner API implementation lives in official_client.py.
         """
         raise NotImplementedError(
             "Real Ring API integration not yet implemented. "
