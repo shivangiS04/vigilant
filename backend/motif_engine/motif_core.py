@@ -141,13 +141,19 @@ class MotifEngine:
 
     def _calculate_adaptation(self, fingerprint: str) -> float:
         """Layer 2 — Sensory adaptation: how often seen? (0-10)"""
+        # same-session repeat: seen before in daily_events this session
+        now = datetime.utcnow()
+        session_cutoff = now - timedelta(hours=24)
+        session_count = sum(1 for ts, fp in self.daily_events if ts > session_cutoff and fp == fingerprint)
+        if session_count >= 1:
+            return 1.0  # already processed this pattern today → fully adapted
+
         if fingerprint not in self.baseline_patterns:
             return 10.0  # first time ever
 
         bp = self.baseline_patterns[fingerprint]
-        now = datetime.utcnow()
 
-        # same-day repeat → near-zero
+        # same-day repeat via baseline timestamp → near-zero
         if bp.last_seen and (now - bp.last_seen) < timedelta(hours=3):
             return 1.0
 
