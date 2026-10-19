@@ -13,12 +13,25 @@
 | **API** | https://vigilant-backend-omega.vercel.app |
 | **GitHub** | https://github.com/shivangiS04/vigilant |
 
-Seed the live backend with demo data:
+Seed the live backend with demo data (requires `DEMO_SEED_TOKEN` set in Vercel env vars):
 ```bash
-curl -X POST "https://vigilant-backend-omega.vercel.app/demo/seed"
+curl -X POST "https://vigilant-backend-omega.vercel.app/demo/seed?token=YOUR_DEMO_SEED_TOKEN"
+# Clear demo data after the demo:
+curl -X POST "https://vigilant-backend-omega.vercel.app/demo/clear?token=YOUR_DEMO_SEED_TOKEN"
 ```
 
-> **Note on persistence:** The live backend uses SQLite on Vercel's `/tmp` filesystem, which resets on cold starts (~15 min of inactivity). Re-run the seed curl if patterns disappear. To make it permanent, set `DATABASE_URL` to a hosted Postgres (e.g. Supabase free tier) in the Vercel project settings — no code changes needed.
+---
+
+## Branch Structure
+
+| Branch | What's on it |
+|---|---|
+| `main` | Stable, tagged releases only |
+| `ring-live-integration` | Sprint integration — all sprint work merged here |
+| `security/secrets-gitleaks` | Gitleaks pre-commit + CI scan, `.db` files untracked, secrets scrubbed from docs |
+| `fix/motif-loitering-timezone` | MOTIF engine: loitering fix, timezone-aware classification, 12 new tests |
+| `feat/daily-summary-demo-seed` | `GET /daily-summary` route + Analytics digest card; demo seed token protection + `/demo/clear` + caretaking pattern |
+| `docs/sprint-3-updates` | README API table, test count, submission files (final_report, description) |
 
 ---
 
@@ -134,6 +147,7 @@ vigilant/
 │   │   │   ├── PatternCard.jsx     ← Clickable card: salience bar + flagged badge.
 │   │   │   ├── PatternDetail.jsx   ← Detail view: score breakdown + explanation.
 │   │   │   ├── EventTimeline.jsx   ← Raw Ring event list.
+│   │   │   ├── DailySummary.jsx    ← Today's digest: stat tiles, salience bar, top alert.
 │   │   │   └── BaselineComparison.jsx ← 7-day activity vs. baseline AreaChart (Recharts).
 │   │   ├── hooks/
 │   │   │   └── useEvents.js        ← useEvents + usePatterns polling hooks (30s interval).
@@ -201,11 +215,17 @@ Dashboard at `http://localhost:3000`.
 
 ### 4. Seed demo data
 
+In simulator mode (local dev — no token needed):
 ```bash
 curl -X POST "http://localhost:8000/demo/seed"
 ```
 
-This endpoint is available only when `RING_INTEGRATION_MODE=simulator`.
+In official mode (live judge demo — requires `DEMO_SEED_TOKEN` set in env):
+```bash
+curl -X POST "http://localhost:8000/demo/seed?token=YOUR_DEMO_SEED_TOKEN"
+# Clear after the demo:
+curl -X POST "http://localhost:8000/demo/clear?token=YOUR_DEMO_SEED_TOKEN"
+```
 
 ---
 
@@ -273,7 +293,9 @@ Base URL (prod): `https://vigilant-backend-omega.vercel.app`
 | POST | `/patterns/score` | Score an event sequence on demand |
 | GET | `/baseline?home_id=` | Learned baseline patterns for a home |
 | GET | `/baseline-comparison?home_id=&days=` | 7-day activity vs. historical baseline |
-| POST | `/demo/seed?home_id=` | Seed dashboard with demo data |
+| GET | `/daily-summary?home_id=` | 24h digest: event/pattern counts, noise reduction %, top alert |
+| POST | `/demo/seed?home_id=&token=` | Seed dashboard with sample data (simulator, or token in official mode) |
+| POST | `/demo/clear?home_id=&token=` | Remove seeded demo records |
 
 ### Score a pattern manually
 
@@ -448,14 +470,15 @@ DATABASE_URL=postgresql://postgres:vigilant@localhost:5432/vigilant
 - [x] React dashboard — Patterns / Analytics / Events tabs, 30s polling
 - [x] Pattern detail view — click any card for score breakdown + explanation
 - [x] **7-day baseline comparison chart** — AreaChart with color-coded dots, flag badges, responsive
-- [x] Demo seed endpoint for instant UI testing (simulator mode only, labeled `[Sample]`)
+- [x] Demo seed endpoint — simulator mode (no token) or official mode (DEMO_SEED_TOKEN), labeled `[Sample]`; `/demo/clear` to clean up after judge demos
+- [x] **Daily digest** — `GET /daily-summary` + Analytics tab digest card (stat tiles, noise %, top alert, pattern breakdown)
 - [x] Vercel deployment — frontend + backend both live
-- [x] CI pipeline — GitHub Actions, 63 tests passing
+- [x] CI pipeline — GitHub Actions, 68 tests passing
 - [x] FRICTION_LOG.md — real dev issues documented
 
 ### Next Up / Planned
 - [ ] **Alexa voice announcements** — Lambda handler + AlexaClient are written; skill certification and Proactive Events API setup are the remaining steps (see [Planned: Alexa Voice Announcements](#planned-alexa-voice-announcements))
-- [ ] Persistent Postgres on Vercel (Supabase/Neon — just set `DATABASE_URL`)
+- [x] Persistent Postgres on Vercel — set `DATABASE_URL` to your Neon connection string in Vercel settings; no code changes needed
 - [ ] Push notifications via SNS for flagged patterns when homeowner is away
 
 ---
