@@ -28,8 +28,16 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
-    _make_event_confidence_nullable()
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception:
+        # On Postgres, concurrent cold starts can race on CREATE TABLE.
+        # If the table already exists the error is harmless — just continue.
+        pass
+    try:
+        _make_event_confidence_nullable()
+    except Exception:
+        pass
 
 
 def _make_event_confidence_nullable(database_engine=engine):
