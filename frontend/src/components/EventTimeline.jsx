@@ -7,18 +7,29 @@ const TYPE_ICON = {
   doorbell: "🔔",
 };
 
+const SOURCE_BADGE = {
+  sample: { label: "sample", color: "#c05621", bg: "#fffaf0", border: "#fbd38d" },
+  simulator: { label: "sim", color: "#2b6cb0", bg: "#ebf8ff", border: "#bee3f8" },
+};
+
 function EventRow({ event }) {
   const icon = TYPE_ICON[event.type] || "📷";
   const time = new Date(event.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });
+  const badge = event.source && event.source !== "ring" ? SOURCE_BADGE[event.source] : null;
   return (
     <div style={styles.row}>
       <span style={styles.icon}>{icon}</span>
       <span style={styles.time}>{time}</span>
       <span style={styles.camera}>{event.camera_name.replace(/_/g, " ")}</span>
       <span style={styles.type}>{event.type.replace(/_/g, " ")}</span>
+      {badge && (
+        <span style={{ ...styles.badge, color: badge.color, background: badge.bg, borderColor: badge.border }}>
+          {badge.label}
+        </span>
+      )}
       <span style={styles.confidence}>
         {event.confidence == null ? "—" : `${(event.confidence * 100).toFixed(0)}%`}
       </span>
@@ -58,6 +69,7 @@ const styles = {
   time: { color: "#666", width: 52, flexShrink: 0, fontSize: 12 },
   camera: { flex: 1, textTransform: "capitalize", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   type: { flex: 1, color: "#333", textTransform: "capitalize", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  badge: { fontSize: 10, borderRadius: 3, padding: "1px 5px", border: "1px solid", flexShrink: 0 },
   confidence: { color: "#888", width: 36, textAlign: "right", flexShrink: 0, fontSize: 12 },
   state: { color: "#666", padding: 16 },
   stateError: { color: "#c00", padding: 16 },

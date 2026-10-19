@@ -568,6 +568,11 @@ def _persist_ring_webhook(payload: dict, normalized_event):
                 pipeline_event = normalized_event.as_event_dict(home_id)
                 pipeline_event["camera_name"] = camera_name
                 pipeline_event["raw_payload"] = payload
+                pipeline_event["source"] = (
+                    "simulator"
+                    if os.getenv("RING_INTEGRATION_MODE", "official").lower() == "simulator"
+                    else "ring"
+                )
                 repo.save_event(db, pipeline_event)
             elif not receipt_created:
                 camera = repo.get_camera(db, stored_event.camera_id)
@@ -691,13 +696,18 @@ def ring_status():
                     "processed": receipt.processed_at is not None,
                     "request_id": receipt.request_id[:8] + "…",
                 }
-            # Cameras (=devices)
+            # Devices: only cameras belonging to homes with a linked Ring account.
+            # Cameras created by demo-seed or simulator have no linked RingAccount,
+            # so they must never appear in the Ring devices list.
             from backend.database.models import Camera
-            cameras = db.query(Camera).all()
-            devices = [
-                {"id": c.id, "name": c.name, "home_id": c.home_id}
-                for c in cameras
-            ]
+            linked_home_ids = {acc["home_id"] for acc in linked_accounts if acc.get("home_id")}
+            all_cameras = db.query(Camera).all()
+            if linked_home_ids:
+                devices = [
+                    {"id": c.id, "name": c.name, "home_id": c.home_id}
+                    for c in all_cameras if c.home_id in linked_home_ids
+                ]
+            sim_device_count = sum(1 for c in all_cameras if c.home_id not in linked_home_ids)
     except Exception as _e:
         logger.warning("ring_status DB query failed: %s", _e)
 
@@ -711,6 +721,7 @@ def ring_status():
         "linked_accounts": linked_accounts,
         "linked_account_count": len(linked_accounts),
         "devices": devices,
+        "simulator_device_count": sim_device_count,
         "last_webhook": last_webhook,
         "last_link_attempt": _link_attempts[-1] if _link_attempts else None,
         "mode": os.getenv("RING_INTEGRATION_MODE", "official"),
@@ -766,6 +777,7 @@ def get_events(
                 "confidence": r.confidence,
                 "timestamp": r.timestamp.isoformat(),
                 "home_id": r.home_id,
+                "source": r.source or "ring",
             }
             for r in rows
         ]
@@ -949,19 +961,19 @@ def seed_demo_data(
     h = home_id  # short alias for id prefixing
     _ex = RuleBasedExplainer()
     demo_events = [
-        {"id": f"{h}_e1",  "camera_id": "front_door",  "type": "person_detected",  "confidence": 0.95, "timestamp": (now - timedelta(hours=2, minutes=5)).isoformat(),  "home_id": home_id},
-        {"id": f"{h}_e2",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.91, "timestamp": (now - timedelta(hours=2, minutes=4)).isoformat(),  "home_id": home_id},
-        {"id": f"{h}_e3",  "camera_id": "driveway",    "type": "vehicle_detected", "confidence": 0.88, "timestamp": (now - timedelta(hours=1, minutes=45)).isoformat(), "home_id": home_id},
-        {"id": f"{h}_e4",  "camera_id": "side_door",   "type": "person_detected",  "confidence": 0.90, "timestamp": (now - timedelta(hours=1, minutes=30)).isoformat(), "home_id": home_id},
-        {"id": f"{h}_e5",  "camera_id": "front_door",  "type": "doorbell",         "confidence": 1.00, "timestamp": (now - timedelta(minutes=45)).isoformat(),          "home_id": home_id},
-        {"id": f"{h}_e6",  "camera_id": "front_door",  "type": "person_detected",  "confidence": 0.93, "timestamp": (now - timedelta(minutes=44)).isoformat(),          "home_id": home_id},
-        {"id": f"{h}_e7",  "camera_id": "backyard",    "type": "motion_detected",  "confidence": 0.78, "timestamp": (now - timedelta(minutes=20)).isoformat(),          "home_id": home_id},
-        {"id": f"{h}_e8",  "camera_id": "side_door",   "type": "person_detected",  "confidence": 0.86, "timestamp": (now - timedelta(minutes=8)).isoformat(),           "home_id": home_id},
-        {"id": f"{h}_e9",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.82, "timestamp": (now - timedelta(minutes=5)).isoformat(),           "home_id": home_id},
-        {"id": f"{h}_e10", "camera_id": "driveway",    "type": "vehicle_detected", "confidence": 0.85, "timestamp": (now - timedelta(minutes=2)).isoformat(),           "home_id": home_id},
+        {"id": f"{h}_e1",  "camera_id": "front_door",  "type": "person_detected",  "confidence": 0.95, "timestamp": (now - timedelta(hours=2, minutes=5)).isoformat(),  "home_id": home_id, "source": "sample"},
+        {"id": f"{h}_e2",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.91, "timestamp": (now - timedelta(hours=2, minutes=4)).isoformat(),  "home_id": home_id, "source": "sample"},
+        {"id": f"{h}_e3",  "camera_id": "driveway",    "type": "vehicle_detected", "confidence": 0.88, "timestamp": (now - timedelta(hours=1, minutes=45)).isoformat(), "home_id": home_id, "source": "sample"},
+        {"id": f"{h}_e4",  "camera_id": "side_door",   "type": "person_detected",  "confidence": 0.90, "timestamp": (now - timedelta(hours=1, minutes=30)).isoformat(), "home_id": home_id, "source": "sample"},
+        {"id": f"{h}_e5",  "camera_id": "front_door",  "type": "doorbell",         "confidence": 1.00, "timestamp": (now - timedelta(minutes=45)).isoformat(),          "home_id": home_id, "source": "sample"},
+        {"id": f"{h}_e6",  "camera_id": "front_door",  "type": "person_detected",  "confidence": 0.93, "timestamp": (now - timedelta(minutes=44)).isoformat(),          "home_id": home_id, "source": "sample"},
+        {"id": f"{h}_e7",  "camera_id": "backyard",    "type": "motion_detected",  "confidence": 0.78, "timestamp": (now - timedelta(minutes=20)).isoformat(),          "home_id": home_id, "source": "sample"},
+        {"id": f"{h}_e8",  "camera_id": "side_door",   "type": "person_detected",  "confidence": 0.86, "timestamp": (now - timedelta(minutes=8)).isoformat(),           "home_id": home_id, "source": "sample"},
+        {"id": f"{h}_e9",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.82, "timestamp": (now - timedelta(minutes=5)).isoformat(),           "home_id": home_id, "source": "sample"},
+        {"id": f"{h}_e10", "camera_id": "driveway",    "type": "vehicle_detected", "confidence": 0.85, "timestamp": (now - timedelta(minutes=2)).isoformat(),           "home_id": home_id, "source": "sample"},
         # caretaking / late_first_activity seed: motion at front_door around 14:30 local, first activity of day
-        {"id": f"{h}_e11", "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.80, "timestamp": (now - timedelta(hours=5, minutes=30)).isoformat(), "home_id": home_id},
-        {"id": f"{h}_e12", "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.77, "timestamp": (now - timedelta(hours=5, minutes=25)).isoformat(), "home_id": home_id},
+        {"id": f"{h}_e11", "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.80, "timestamp": (now - timedelta(hours=5, minutes=30)).isoformat(), "home_id": home_id, "source": "sample"},
+        {"id": f"{h}_e12", "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.77, "timestamp": (now - timedelta(hours=5, minutes=25)).isoformat(), "home_id": home_id, "source": "sample"},
     ]
 
     demo_patterns = [

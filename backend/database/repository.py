@@ -130,6 +130,7 @@ def save_event(db: Session, event_data: dict) -> RingEvent:
         confidence=event_data.get("confidence"),
         timestamp=datetime.fromisoformat(event_data["timestamp"]),
         raw_payload=event_data,
+        source=event_data.get("source"),
     )
     db.add(ev)
     return ev

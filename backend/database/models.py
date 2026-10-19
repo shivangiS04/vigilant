@@ -91,6 +91,7 @@ class RingEvent(Base):
     confidence = Column(Float, nullable=True)
     timestamp = Column(DateTime, nullable=False, index=True)
     raw_payload = Column(JSON)                      # original Ring event JSON
+    source = Column(String, nullable=True)          # "ring" | "simulator" | "sample"
     created_at = Column(DateTime, default=datetime.utcnow)
 
     home = relationship("Home", back_populates="events")
