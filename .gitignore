@@ -22,8 +22,9 @@ frontend/.vite/
 .DS_Store
 **/.DS_Store
 
-# DB
+# DB — never commit database files; they may contain tokens
 *.db
+*.sqlite
 *.sqlite3
 
 # IDE
