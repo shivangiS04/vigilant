@@ -171,3 +171,16 @@ def test_ring_link_callback_unconfigured_returns_503(client):
     """/ring/link without credentials set returns 503 (not 500)."""
     res = client.get("/ring/link?time=1234567890&nonce=testnonce")
     assert res.status_code == 503
+
+
+def test_webhook_body_too_large_returns_413(monkeypatch):
+    """POST /ring/webhook with a body > 64 KB must return 413."""
+    monkeypatch.setenv("RING_HMAC_SIGNING_KEY", "test_key_for_size_check")
+    with TestClient(app) as c:
+        oversized = b"x" * (64 * 1024 + 1)
+        res = c.post(
+            "/ring/webhook",
+            content=oversized,
+            headers={"content-type": "application/json", "x-signature": "fakesig"},
+        )
+    assert res.status_code == 413

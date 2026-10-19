@@ -51,15 +51,20 @@ app.add_middleware(
     https_only=os.getenv("RING_COOKIE_SECURE", "false").lower() == "true",
 )
 
-_ALLOWED_ORIGINS = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:3000"
-).split(",")
+_ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS")
+_ALLOWED_ORIGINS = (
+    [o.strip() for o in _ALLOWED_ORIGINS_ENV.split(",") if o.strip()]
+    if _ALLOWED_ORIGINS_ENV
+    else ["http://localhost:3000"]
+)
+# Only apply the wildcard regex when no explicit list is configured.
+# In production, set ALLOWED_ORIGINS to the exact frontend URL(s).
+_ORIGIN_REGEX = None if _ALLOWED_ORIGINS_ENV else r"https://.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -593,12 +598,17 @@ def _process_ring_event_background(event: dict, home_id: str, request_id: str) -
         repo.mark_webhook_processed(db, request_id)
 
 
+_WEBHOOK_MAX_BYTES = 64 * 1024  # 64 KB — Ring payloads are tiny; reject oversized bodies early
+
+
 @app.post("/ring/webhook")
 async def ring_webhook(request: Request, background_tasks: BackgroundTasks):
     signing_key = os.getenv("RING_HMAC_SIGNING_KEY")
     if not signing_key:
         raise HTTPException(status_code=503, detail="Ring webhook signing key is not configured")
     raw_body = await request.body()
+    if len(raw_body) > _WEBHOOK_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Webhook body too large")
     if not verify_webhook_signature(
         signing_key, raw_body, request.headers.get("x-signature", "")
     ):
