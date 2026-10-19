@@ -25,7 +25,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 from backend.motif_engine.motif_core import MotifEngine, RingEvent as MotifRingEvent
-from backend.bedrock_integration.explanation_generator import ExplanationGenerator
+from backend.explanation.explainer import RuleBasedExplainer
 from backend.database.session import get_db, init_db
 from backend.database import repository as repo
 from backend.database.models import Pattern as PatternModel, RingEvent as RingEventModel
@@ -65,9 +65,9 @@ app.add_middleware(
 )
 
 motif = MotifEngine()
-bedrock = ExplanationGenerator()
+explainer = RuleBasedExplainer()
 alexa = AlexaClient()
-ring_pipeline = RingEventPipeline(motif, bedrock, alexa)
+ring_pipeline = RingEventPipeline(motif, explainer, alexa)
 
 # In-memory: last 5 link attempts for /ring/status visibility.
 # Not persisted across restarts but survives within one Vercel function instance.
@@ -162,8 +162,6 @@ def health():
         and os.getenv("VIGILANT_ACCOUNT_EMAIL")
         and os.getenv("VIGILANT_ACCOUNT_PASSWORD_HASH")
     )
-    # Bedrock
-    bedrock_configured = bool(os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"))
     # DB
     db_ok = False
     try:
@@ -194,10 +192,9 @@ def health():
                 "reason": None if ring_link_configured else "RING_TOKEN_ENCRYPTION_KEY / RING_SESSION_SECRET / VIGILANT_ACCOUNT_EMAIL / VIGILANT_ACCOUNT_PASSWORD_HASH not set",
                 "linked_accounts": linked_accounts,
             },
-            "bedrock_explanations": {
-                "enabled": bedrock_configured,
-                "model": os.getenv("BEDROCK_MODEL_ID", bedrock.MODEL_ID),
-                "reason": None if bedrock_configured else "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set — explanations will show 'unavailable'",
+            "explanations": {
+                "enabled": True,
+                "type": "rule_based",
             },
             "database": {
                 "ok": db_ok,
@@ -707,7 +704,7 @@ def score_pattern(req: ScoreRequest):
     }
 
     if score.flagged:
-        explanation = bedrock.generate_explanation(pattern_data)
+        explanation = explainer.generate_explanation(pattern_data)
     else:
         explanation = "Pattern within normal parameters."
 
@@ -838,6 +835,7 @@ def seed_demo_data(
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     h = home_id  # short alias for id prefixing
+    _ex = RuleBasedExplainer()
     demo_events = [
         {"id": f"{h}_e1",  "camera_id": "front_door",  "type": "person_detected",  "confidence": 0.95, "timestamp": (now - timedelta(hours=2, minutes=5)).isoformat(),  "home_id": home_id},
         {"id": f"{h}_e2",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.91, "timestamp": (now - timedelta(hours=2, minutes=4)).isoformat(),  "home_id": home_id},
@@ -855,11 +853,11 @@ def seed_demo_data(
     ]
 
     demo_patterns = [
-        {"id": f"{h}_p1", "home_id": home_id, "pattern_type": "rapid_return",       "fingerprint": "fp1", "salience_score": 8.2, "novelty_score": 9.0, "adaptation_score": 10.0, "temporal_weight": 0.8, "competition_score": 10.0, "flagged": True,  "explanation": "[Sample] Someone returned home just 8 minutes after leaving — far shorter than the usual 4+ hours — and entered through the side door instead of the front. Worth a quick check.", "detected_at": (now - timedelta(hours=2)).isoformat(), "event_ids": [f"{h}_e1", f"{h}_e2", f"{h}_e4"]},
-        {"id": f"{h}_p2", "home_id": home_id, "pattern_type": "delivery",           "fingerprint": "fp2", "salience_score": 5.1, "novelty_score": 5.0, "adaptation_score": 5.0,  "temporal_weight": 0.8, "competition_score": 7.0,  "flagged": False, "explanation": "[Sample] A vehicle pulled up and a person approached the front door — likely a package delivery around the usual midday window.", "detected_at": (now - timedelta(hours=1, minutes=40)).isoformat(), "event_ids": [f"{h}_e3", f"{h}_e5", f"{h}_e6"]},
-        {"id": f"{h}_p3", "home_id": home_id, "pattern_type": "unusual_entrance",   "fingerprint": "fp3", "salience_score": 7.5, "novelty_score": 8.0, "adaptation_score": 9.0,  "temporal_weight": 1.0, "competition_score": 5.0,  "flagged": True,  "explanation": "[Sample] Activity detected at the side door during an unusual time — this entrance is rarely used and wasn't part of any expected pattern today.", "detected_at": (now - timedelta(minutes=10)).isoformat(), "event_ids": [f"{h}_e8"]},
-        {"id": f"{h}_p4", "home_id": home_id, "pattern_type": "standard_activity",  "fingerprint": "fp4", "salience_score": 2.8, "novelty_score": 2.0, "adaptation_score": 3.0,  "temporal_weight": 0.8, "competition_score": 3.0,  "flagged": False, "explanation": "[Sample] Backyard motion — consistent with wind or an animal. No person detected.", "detected_at": (now - timedelta(minutes=22)).isoformat(), "event_ids": [f"{h}_e7"]},
-        {"id": f"{h}_p5", "home_id": home_id, "pattern_type": "late_first_activity", "fingerprint": "fp5", "salience_score": 6.8, "novelty_score": 7.0, "adaptation_score": 8.0,  "temporal_weight": 0.5, "competition_score": 5.0,  "flagged": True,  "explanation": "[Sample] First activity of the day didn't appear until mid-afternoon — earlier days show movement by 9 AM. Could indicate a wellness concern worth checking on.", "detected_at": (now - timedelta(hours=5, minutes=28)).isoformat(), "event_ids": [f"{h}_e11", f"{h}_e12"]},
+        {"id": f"{h}_p1", "home_id": home_id, "pattern_type": "rapid_return",        "fingerprint": "fp1", "salience_score": 8.2, "novelty_score": 9.0, "adaptation_score": 10.0, "temporal_weight": 0.8, "competition_score": 10.0, "flagged": True,  "explanation": _ex.generate_explanation({"pattern_type": "rapid_return",        "novelty_score": 9.0, "adaptation_score": 10.0, "salience_score": 8.2, "events": [{"timestamp": (now - timedelta(hours=2, minutes=5)).isoformat(), "camera": "front_door", "type": "person_detected"}, {"timestamp": (now - timedelta(hours=2, minutes=4)).isoformat(), "camera": "front_door", "type": "motion_detected"}, {"timestamp": (now - timedelta(hours=1, minutes=30)).isoformat(), "camera": "side_door", "type": "person_detected"}]}), "detected_at": (now - timedelta(hours=2)).isoformat(),            "event_ids": [f"{h}_e1", f"{h}_e2", f"{h}_e4"]},
+        {"id": f"{h}_p2", "home_id": home_id, "pattern_type": "delivery",            "fingerprint": "fp2", "salience_score": 5.1, "novelty_score": 5.0, "adaptation_score": 5.0,  "temporal_weight": 0.8, "competition_score": 7.0,  "flagged": False, "explanation": _ex.generate_explanation({"pattern_type": "delivery",            "novelty_score": 5.0, "adaptation_score": 5.0,  "salience_score": 5.1, "events": [{"timestamp": (now - timedelta(hours=1, minutes=45)).isoformat(), "camera": "driveway",   "type": "vehicle_detected"}, {"timestamp": (now - timedelta(minutes=45)).isoformat(),          "camera": "front_door", "type": "doorbell"},         {"timestamp": (now - timedelta(minutes=44)).isoformat(),          "camera": "front_door", "type": "person_detected"}]}), "detected_at": (now - timedelta(hours=1, minutes=40)).isoformat(), "event_ids": [f"{h}_e3", f"{h}_e5", f"{h}_e6"]},
+        {"id": f"{h}_p3", "home_id": home_id, "pattern_type": "unusual_entrance",    "fingerprint": "fp3", "salience_score": 7.5, "novelty_score": 8.0, "adaptation_score": 9.0,  "temporal_weight": 1.0, "competition_score": 5.0,  "flagged": True,  "explanation": _ex.generate_explanation({"pattern_type": "unusual_entrance",    "novelty_score": 8.0, "adaptation_score": 9.0,  "salience_score": 7.5, "events": [{"timestamp": (now - timedelta(minutes=8)).isoformat(),            "camera": "side_door",  "type": "person_detected"}]}),                                                                                                                                                                                                                                                                                           "detected_at": (now - timedelta(minutes=10)).isoformat(),           "event_ids": [f"{h}_e8"]},
+        {"id": f"{h}_p4", "home_id": home_id, "pattern_type": "standard_activity",   "fingerprint": "fp4", "salience_score": 2.8, "novelty_score": 2.0, "adaptation_score": 3.0,  "temporal_weight": 0.8, "competition_score": 3.0,  "flagged": False, "explanation": _ex.generate_explanation({"pattern_type": "standard_activity",   "novelty_score": 2.0, "adaptation_score": 3.0,  "salience_score": 2.8, "events": [{"timestamp": (now - timedelta(minutes=20)).isoformat(),           "camera": "backyard",   "type": "motion_detected"}]}),                                                                                                                                                                                                                                                                                           "detected_at": (now - timedelta(minutes=22)).isoformat(),           "event_ids": [f"{h}_e7"]},
+        {"id": f"{h}_p5", "home_id": home_id, "pattern_type": "late_first_activity", "fingerprint": "fp5", "salience_score": 6.8, "novelty_score": 7.0, "adaptation_score": 8.0,  "temporal_weight": 0.5, "competition_score": 5.0,  "flagged": True,  "explanation": _ex.generate_explanation({"pattern_type": "late_first_activity", "novelty_score": 7.0, "adaptation_score": 8.0,  "salience_score": 6.8, "events": [{"timestamp": (now - timedelta(hours=5, minutes=30)).isoformat(),  "camera": "front_door", "type": "motion_detected"}, {"timestamp": (now - timedelta(hours=5, minutes=25)).isoformat(),  "camera": "front_door", "type": "motion_detected"}]}),                                                                                                               "detected_at": (now - timedelta(hours=5, minutes=28)).isoformat(),  "event_ids": [f"{h}_e11", f"{h}_e12"]},
     ]
 
     seeded_p = 0

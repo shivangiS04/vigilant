@@ -10,9 +10,9 @@ from backend.motif_engine.motif_core import MotifEngine, RingEvent as MotifRingE
 
 
 class RingEventPipeline:
-    def __init__(self, motif: MotifEngine, bedrock: Any, alexa: Any, window_size: int = 5):
+    def __init__(self, motif: MotifEngine, explainer: Any, alexa: Any, window_size: int = 5):
         self.motif = motif
-        self.bedrock = bedrock
+        self.explainer = explainer
         self.alexa = alexa
         self.window_size = window_size
         self._pending: Dict[str, deque] = defaultdict(lambda: deque(maxlen=window_size))
@@ -61,7 +61,7 @@ class RingEventPipeline:
                 ],
             }
             explanation = (
-                self.bedrock.generate_explanation(pattern_data)
+                self.explainer.generate_explanation(pattern_data)
                 if score.flagged
                 else "Pattern within normal parameters."
             )
