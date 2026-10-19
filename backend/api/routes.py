@@ -373,17 +373,20 @@ async def ring_link_claim(request: Request):
         logger.info("[%s] ring/link/claim: account %s… linked ok", cid, account_id[:4] if account_id else "?")
         _record_link_attempt(cid, "claim", True)
     except ValueError as exc:
-        logger.error("[%s] ring/link/claim: nonce/account error — %s", cid, exc)
+        eid = uuid.uuid4().hex[:8]
+        logger.error("[%s] ring/link/claim: nonce/account error eid=%s — %s", cid, eid, exc, exc_info=True)
         _record_link_attempt(cid, "claim", False, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=f"Linking failed (err:{eid})") from exc
     except RuntimeError as exc:
-        logger.error("[%s] ring/link/claim: config error — %s", cid, exc)
+        eid = uuid.uuid4().hex[:8]
+        logger.error("[%s] ring/link/claim: config error eid=%s — %s", cid, eid, exc, exc_info=True)
         _record_link_attempt(cid, "claim", False, str(exc))
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=f"Service unavailable (err:{eid})") from exc
     except RingPartnerAPIError as exc:
-        logger.error("[%s] ring/link/claim: Ring API error — %s", cid, exc)
+        eid = uuid.uuid4().hex[:8]
+        logger.error("[%s] ring/link/claim: Ring API error eid=%s — %s", cid, eid, exc, exc_info=True)
         _record_link_attempt(cid, "claim", False, str(exc))
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=f"Ring API error (err:{eid})") from exc
 
     request.session.pop("pending_ring_link", None)
     return HTMLResponse(_ring_homepage(request, "Ring account linked: " + escape(account_id)))
@@ -421,13 +424,15 @@ async def ring_token_exchange(request: Request):
         logger.info("[%s] ring/token: tokens stored for account %s…", cid, account_id[:4] if account_id else "?")
         _record_link_attempt(cid, "token_exchange", True)
     except RuntimeError as exc:
-        logger.error("[%s] ring/token: config error — %s", cid, exc)
+        eid = uuid.uuid4().hex[:8]
+        logger.error("[%s] ring/token: config error eid=%s — %s", cid, eid, exc, exc_info=True)
         _record_link_attempt(cid, "token_exchange", False, str(exc))
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=f"Service unavailable (err:{eid})") from exc
     except RingPartnerAPIError as exc:
-        logger.error("[%s] ring/token: Ring API error — %s", cid, exc)
+        eid = uuid.uuid4().hex[:8]
+        logger.error("[%s] ring/token: Ring API error eid=%s — %s", cid, eid, exc, exc_info=True)
         _record_link_attempt(cid, "token_exchange", False, str(exc))
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=f"Ring API error (err:{eid})") from exc
     return {"status": "accepted"}
 
 
@@ -526,7 +531,9 @@ async def ring_webhook(request: Request, background_tasks: BackgroundTasks):
             _persist_ring_webhook, payload, normalized_event
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        eid = uuid.uuid4().hex[:8]
+        logger.error("ring/webhook: persistence error eid=%s — %s", eid, exc, exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Webhook processing failed (err:{eid})") from exc
 
     if pipeline_event is not None:
         request_id = payload["meta"]["request_id"]
