@@ -8,7 +8,7 @@ import json
 import os
 import secrets
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import List, Optional
 from urllib.parse import parse_qs
@@ -129,7 +129,61 @@ class ScoreResponse(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    from backend.database.session import get_db as _get_db
+    # Ring
+    ring_configured = bool(
+        os.getenv("RING_CLIENT_ID") and os.getenv("RING_CLIENT_SECRET") and os.getenv("RING_HMAC_SIGNING_KEY")
+    )
+    ring_link_configured = bool(
+        os.getenv("RING_TOKEN_ENCRYPTION_KEY")
+        and os.getenv("RING_SESSION_SECRET")
+        and os.getenv("VIGILANT_ACCOUNT_EMAIL")
+        and os.getenv("VIGILANT_ACCOUNT_PASSWORD_HASH")
+    )
+    # Bedrock
+    bedrock_configured = bool(os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"))
+    # DB
+    db_ok = False
+    try:
+        with _get_db() as db:
+            db.execute(__import__("sqlalchemy").text("SELECT 1"))
+            db_ok = True
+    except Exception:
+        pass
+    # Ring accounts
+    linked_accounts = 0
+    try:
+        with _get_db() as db:
+            from backend.database.models import RingAccount
+            linked_accounts = db.query(RingAccount).filter(RingAccount.status == "completed").count()
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        "features": {
+            "ring_webhook": {
+                "enabled": ring_configured,
+                "reason": None if ring_configured else "RING_CLIENT_ID / RING_CLIENT_SECRET / RING_HMAC_SIGNING_KEY not set",
+            },
+            "ring_account_linking": {
+                "enabled": ring_link_configured,
+                "reason": None if ring_link_configured else "RING_TOKEN_ENCRYPTION_KEY / RING_SESSION_SECRET / VIGILANT_ACCOUNT_EMAIL / VIGILANT_ACCOUNT_PASSWORD_HASH not set",
+                "linked_accounts": linked_accounts,
+            },
+            "bedrock_explanations": {
+                "enabled": bedrock_configured,
+                "model": os.getenv("BEDROCK_MODEL_ID", bedrock.MODEL_ID),
+                "reason": None if bedrock_configured else "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set — explanations will show 'unavailable'",
+            },
+            "database": {
+                "ok": db_ok,
+                "url_type": "postgres" if (os.getenv("DATABASE_URL") or "").startswith("postgresql") else "sqlite",
+            },
+            "ring_integration_mode": os.getenv("RING_INTEGRATION_MODE", "official"),
+        },
+    }
 
 
 def _partner_signin_ready() -> bool:
@@ -412,14 +466,114 @@ async def ring_webhook(request: Request, background_tasks: BackgroundTasks):
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     if pipeline_event is not None:
-        background_tasks.add_task(
-            _process_ring_event_background,
-            pipeline_event,
-            home_id,
-            payload["meta"]["request_id"],
-        )
+        request_id = payload["meta"]["request_id"]
+        # On Vercel serverless functions BackgroundTasks may be killed after the
+        # response is returned. Process synchronously on Vercel; use background
+        # tasks elsewhere so the response stays fast.
+        if os.getenv("VERCEL"):
+            await run_in_threadpool(
+                _process_ring_event_background, pipeline_event, home_id, request_id
+            )
+        else:
+            background_tasks.add_task(
+                _process_ring_event_background, pipeline_event, home_id, request_id
+            )
+
     return {"status": status}
+
+
+@app.get("/ring/status")
+def ring_status():
+    """Returns Ring connection status for the dashboard panel. Never exposes credentials."""
+    linked_accounts = []
+    last_webhook = None
+    devices = []
+
+    try:
+        with get_db() as db:
+            from backend.database.models import RingAccount, RingWebhookReceipt
+            accounts = (
+                db.query(RingAccount)
+                .filter(RingAccount.status == "completed")
+                .all()
+            )
+            for acc in accounts:
+                linked_accounts.append({
+                    "account_id": acc.account_id,
+                    "account_identifier": acc.account_identifier,
+                    "home_id": acc.home_id,
+                    "linked_at": acc.created_at.isoformat() if acc.created_at else None,
+                })
+            # Most recent webhook receipt
+            receipt = (
+                db.query(RingWebhookReceipt)
+                .order_by(RingWebhookReceipt.received_at.desc())
+                .first()
+            )
+            if receipt:
+                last_webhook = {
+                    "received_at": receipt.received_at.isoformat(),
+                    "processed": receipt.processed_at is not None,
+                    "request_id": receipt.request_id[:8] + "…",
+                }
+            # Cameras (=devices)
+            from backend.database.models import Camera
+            cameras = db.query(Camera).all()
+            devices = [
+                {"id": c.id, "name": c.name, "home_id": c.home_id}
+                for c in cameras
+            ]
+    except Exception:
+        pass
+
+    return {
+        "ring_configured": bool(
+            os.getenv("RING_CLIENT_ID")
+            and os.getenv("RING_CLIENT_SECRET")
+            and os.getenv("RING_HMAC_SIGNING_KEY")
+        ),
+        "account_link_configured": _partner_signin_ready(),
+        "linked_accounts": linked_accounts,
+        "linked_account_count": len(linked_accounts),
+        "devices": devices,
+        "last_webhook": last_webhook,
+        "mode": os.getenv("RING_INTEGRATION_MODE", "official"),
+    }
+
+
+@app.post("/ring/simulator/seed-account")
+def simulator_seed_account(request_data: dict):
+    """
+    Simulator-only: seed a completed RingAccount so the webhook handler can
+    route events to a home without a real OAuth flow.
+    Only available when RING_INTEGRATION_MODE=simulator.
+    """
+    if os.getenv("RING_INTEGRATION_MODE", "official").lower() != "simulator":
+        raise HTTPException(status_code=404, detail="Not available in official mode")
+    account_id = request_data.get("account_id", "sim_account_001")
+    home_id = request_data.get("home_id", os.getenv("HOME_ID", "home_001"))
+    from backend.database.models import RingAccount
+    with get_db() as db:
+        account = db.query(RingAccount).filter(RingAccount.account_id == account_id).first()
+        if account is None:
+            account = RingAccount(
+                account_id=account_id,
+                partner_user_id="sim_user",
+                home_id=home_id,
+                account_identifier="sim@example.com",
+                access_token_encrypted="sim",
+                refresh_token_encrypted="sim",
+                access_token_expires_at=datetime(2099, 1, 1),
+                status="completed",
+            )
+            db.add(account)
+        elif account.status != "completed":
+            account.home_id = home_id
+            account.status = "completed"
+        repo.get_or_create_home(db, home_id)
+    return {"account_id": account_id, "home_id": home_id, "status": "seeded"}
 
 
 @app.get("/events")
@@ -506,7 +660,7 @@ def score_pattern(req: ScoreRequest):
             "competition_score": score.competition,
             "flagged": score.flagged,
             "explanation": explanation,
-            "detected_at": datetime.utcnow().isoformat(),
+            "detected_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "event_ids": [e.get("id", "") for e in req.events],
         })
 
@@ -567,7 +721,7 @@ def get_baseline(home_id: str = Query("home_001")):
 def seed_demo_data(home_id: str = Query("home_001")):
     if os.getenv("RING_INTEGRATION_MODE", "official").lower() != "simulator":
         raise HTTPException(status_code=404, detail="Demo seeding is disabled outside simulator mode")
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     h = home_id  # short alias for id prefixing
     demo_events = [
@@ -584,10 +738,10 @@ def seed_demo_data(home_id: str = Query("home_001")):
     ]
 
     demo_patterns = [
-        {"id": f"{h}_p1", "home_id": home_id, "pattern_type": "rapid_return",      "fingerprint": "fp1", "salience_score": 8.2, "novelty_score": 9.0, "adaptation_score": 10.0, "temporal_weight": 0.8, "competition_score": 10.0, "flagged": True,  "explanation": "Someone returned home just 8 minutes after leaving — far shorter than the usual 4+ hours — and entered through the side door instead of the front. Worth a quick check.", "detected_at": (now - timedelta(hours=2)).isoformat(), "event_ids": [f"{h}_e1", f"{h}_e2", f"{h}_e4"]},
-        {"id": f"{h}_p2", "home_id": home_id, "pattern_type": "delivery",          "fingerprint": "fp2", "salience_score": 5.1, "novelty_score": 5.0, "adaptation_score": 5.0,  "temporal_weight": 0.8, "competition_score": 7.0,  "flagged": False, "explanation": "A vehicle pulled up and a person approached the front door — likely a package delivery around the usual midday window.", "detected_at": (now - timedelta(hours=1, minutes=40)).isoformat(), "event_ids": [f"{h}_e3", f"{h}_e5", f"{h}_e6"]},
-        {"id": f"{h}_p3", "home_id": home_id, "pattern_type": "unusual_entrance",  "fingerprint": "fp3", "salience_score": 7.5, "novelty_score": 8.0, "adaptation_score": 9.0,  "temporal_weight": 1.0, "competition_score": 5.0,  "flagged": True,  "explanation": "Activity detected at the side door during an unusual time — this entrance is rarely used and wasn't part of any expected pattern today.", "detected_at": (now - timedelta(minutes=10)).isoformat(), "event_ids": [f"{h}_e8"]},
-        {"id": f"{h}_p4", "home_id": home_id, "pattern_type": "standard_activity", "fingerprint": "fp4", "salience_score": 2.8, "novelty_score": 2.0, "adaptation_score": 3.0,  "temporal_weight": 0.8, "competition_score": 3.0,  "flagged": False, "explanation": "Backyard motion — consistent with wind or an animal. No person detected.", "detected_at": (now - timedelta(minutes=22)).isoformat(), "event_ids": [f"{h}_e7"]},
+        {"id": f"{h}_p1", "home_id": home_id, "pattern_type": "rapid_return",      "fingerprint": "fp1", "salience_score": 8.2, "novelty_score": 9.0, "adaptation_score": 10.0, "temporal_weight": 0.8, "competition_score": 10.0, "flagged": True,  "explanation": "[Sample] Someone returned home just 8 minutes after leaving — far shorter than the usual 4+ hours — and entered through the side door instead of the front. Worth a quick check.", "detected_at": (now - timedelta(hours=2)).isoformat(), "event_ids": [f"{h}_e1", f"{h}_e2", f"{h}_e4"]},
+        {"id": f"{h}_p2", "home_id": home_id, "pattern_type": "delivery",          "fingerprint": "fp2", "salience_score": 5.1, "novelty_score": 5.0, "adaptation_score": 5.0,  "temporal_weight": 0.8, "competition_score": 7.0,  "flagged": False, "explanation": "[Sample] A vehicle pulled up and a person approached the front door — likely a package delivery around the usual midday window.", "detected_at": (now - timedelta(hours=1, minutes=40)).isoformat(), "event_ids": [f"{h}_e3", f"{h}_e5", f"{h}_e6"]},
+        {"id": f"{h}_p3", "home_id": home_id, "pattern_type": "unusual_entrance",  "fingerprint": "fp3", "salience_score": 7.5, "novelty_score": 8.0, "adaptation_score": 9.0,  "temporal_weight": 1.0, "competition_score": 5.0,  "flagged": True,  "explanation": "[Sample] Activity detected at the side door during an unusual time — this entrance is rarely used and wasn't part of any expected pattern today.", "detected_at": (now - timedelta(minutes=10)).isoformat(), "event_ids": [f"{h}_e8"]},
+        {"id": f"{h}_p4", "home_id": home_id, "pattern_type": "standard_activity", "fingerprint": "fp4", "salience_score": 2.8, "novelty_score": 2.0, "adaptation_score": 3.0,  "temporal_weight": 0.8, "competition_score": 3.0,  "flagged": False, "explanation": "[Sample] Backyard motion — consistent with wind or an animal. No person detected.", "detected_at": (now - timedelta(minutes=22)).isoformat(), "event_ids": [f"{h}_e7"]},
     ]
 
     seeded_p = 0
@@ -600,6 +754,47 @@ def seed_demo_data(home_id: str = Query("home_001")):
                 seeded_p += 1
 
     return {"seeded_events": len(demo_events), "seeded_patterns": seeded_p}
+
+
+class FeedbackRequest(BaseModel):
+    pattern_id: str
+    feedback: str  # "normal" | "concerning"
+    home_id: str = "home_001"
+
+
+@app.post("/patterns/{pattern_id}/feedback")
+def submit_pattern_feedback(pattern_id: str, req: FeedbackRequest):
+    """
+    User feedback on a flagged pattern. 'normal' feeds it into the baseline
+    so similar future patterns score lower. 'concerning' is logged but has no
+    immediate model effect (future work: increase adaptation weight).
+    """
+    with get_db() as db:
+        pattern = repo.get_pattern_by_id(db, pattern_id)
+        if not pattern:
+            raise HTTPException(status_code=404, detail="Pattern not found")
+        if req.feedback not in ("normal", "concerning"):
+            raise HTTPException(status_code=400, detail="feedback must be 'normal' or 'concerning'")
+
+        if req.feedback == "normal" and pattern.fingerprint:
+            repo.upsert_baseline(db, pattern.home_id, pattern.fingerprint, pattern.pattern_type)
+            # Also hydrate the in-memory engine so it takes effect immediately
+            motif.baseline_patterns[pattern.fingerprint] = type(
+                "BaselinePattern", (),
+                {
+                    "fingerprint": pattern.fingerprint,
+                    "count": 5,  # treat as "seen several times" → lower novelty
+                    "last_seen": None,
+                    "first_seen": None,
+                },
+            )()
+
+    return {
+        "pattern_id": pattern_id,
+        "feedback": req.feedback,
+        "effect": "Added to baseline — similar patterns will score lower." if req.feedback == "normal"
+                  else "Noted. Patterns like this will continue to be flagged.",
+    }
 
 
 # ------------------------------------------------------------------

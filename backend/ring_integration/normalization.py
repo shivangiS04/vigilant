@@ -73,14 +73,20 @@ def normalize_ring_event(
     )
 
 
+_NON_EVENT_TYPES = {"app_integration_removed", "app_integration_added"}
+
+
 def normalize_webhook_event(payload: dict[str, Any]) -> Optional[NormalizedRingEvent]:
     try:
         event = payload["data"]
+        event_type = event["type"]
+        # Lifecycle events carry no sensor data — handled separately by the caller.
+        if event_type in _NON_EVENT_TYPES:
+            return None
         attributes = event["attributes"]
         account_id = payload["meta"]["account_id"]
         device_id = attributes["source"]
         event_id = event["id"]
-        event_type = event["type"]
         timestamp_ms = attributes["timestamp"]
     except (KeyError, TypeError) as exc:
         raise ValueError("Malformed Ring webhook payload") from exc

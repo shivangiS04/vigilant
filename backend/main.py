@@ -3,36 +3,10 @@
 import asyncio
 import os
 import uvicorn
-from backend.api.routes import app, ring_pipeline
-from backend.ring_integration.api_client import RingAPIClient
-from backend.database.session import get_db
-from backend.database import repository as repo
+from backend.api.routes import app
+from backend.ring_integration.webhook_simulator import run_simulator
+
 HOME_ID = os.getenv("HOME_ID", "home_001")
-
-
-async def handle_ring_event(event):
-    event_dict = {
-        "id": event.event_id,
-        "camera_id": event.camera_id,
-        "camera_name": event.camera_name,
-        "type": event.type,
-        "confidence": event.confidence,
-        "timestamp": event.timestamp.isoformat(),
-        "home_id": event.home_id,
-    }
-
-    with get_db() as db:
-        repo.upsert_camera(db, event.home_id, event.camera_id, event.camera_name)
-        repo.save_event(db, event_dict)
-    ring_pipeline.process(event_dict, event.home_id)
-
-
-async def run_ring_simulator():
-    client = RingAPIClient.simulator(home_id=HOME_ID)
-    client.on_event(handle_ring_event)
-    print("[Ring] Simulator started (polling every 5s)")
-    async for event in client.stream_events():
-        print(f"[Ring] {event.camera_name}: {event.type} ({event.confidence:.0%})")
 
 
 async def run_api():
@@ -45,7 +19,15 @@ async def run_api():
 async def main():
     mode = os.getenv("RING_INTEGRATION_MODE", "official").lower()
     if mode == "simulator":
-        await asyncio.gather(run_ring_simulator(), run_api())
+        signing_key = os.getenv("RING_HMAC_SIGNING_KEY", "simulator-dev-key")
+        print("[Ring] Simulator mode — sending HMAC-signed webhooks to /ring/webhook")
+        # Give the API a moment to bind before the simulator starts sending
+        api_task = asyncio.create_task(run_api())
+        await asyncio.sleep(1.5)
+        sim_task = asyncio.create_task(
+            run_simulator(signing_key, "http://localhost:8000/ring/webhook")
+        )
+        await asyncio.gather(api_task, sim_task)
         return
     if mode != "official":
         raise RuntimeError("RING_INTEGRATION_MODE must be 'official' or 'simulator'")

@@ -1,6 +1,6 @@
 import hashlib
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -59,7 +59,7 @@ def receive_authorization_code(
             "account_id": account_id,
             "access_token_encrypted": encrypt_token(access_token),
             "refresh_token_encrypted": encrypt_token(refresh_token),
-            "access_token_expires_at": datetime.utcnow() + timedelta(seconds=expires_in),
+            "access_token_expires_at": datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=expires_in),
         },
     )
     return account_id
@@ -69,14 +69,14 @@ def get_access_token(
     db: Session, account: RingAccount, client: Optional[RingPartnerClient] = None
 ) -> str:
     api = client or RingPartnerClient.from_env()
-    if account.access_token_expires_at > datetime.utcnow() + timedelta(minutes=5):
+    if account.access_token_expires_at > datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5):
         return decrypt_token(account.access_token_encrypted)
 
     tokens = api.refresh_tokens(decrypt_token(account.refresh_token_encrypted))
     expires_in = int(tokens["expires_in"])
     account.access_token_encrypted = encrypt_token(tokens["access_token"])
     account.refresh_token_encrypted = encrypt_token(tokens["refresh_token"])
-    account.access_token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+    account.access_token_expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=expires_in)
     db.flush()
     return tokens["access_token"]
 

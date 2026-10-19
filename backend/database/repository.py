@@ -2,7 +2,7 @@
 All DB reads/writes in one place. Routes call these, never touch ORM directly.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -82,7 +82,7 @@ def save_webhook_receipt(
 def mark_webhook_processed(db: Session, request_id: str) -> None:
     receipt = get_webhook_receipt(db, request_id)
     if receipt:
-        receipt.processed_at = datetime.utcnow()
+        receipt.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def upsert_camera(db: Session, home_id: str, camera_id: str, name: str) -> Camera:
@@ -129,7 +129,7 @@ def get_ring_event(db: Session, event_id: str) -> Optional[RingEvent]:
 
 
 def get_events(db: Session, home_id: str, hours: int = 24, limit: int = 50) -> List[RingEvent]:
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
     return (
         db.query(RingEvent)
         .filter(RingEvent.home_id == home_id, RingEvent.timestamp >= cutoff)
@@ -171,7 +171,7 @@ def get_patterns(
     flagged_only: bool = False,
     min_salience: float = 0.0,
 ) -> List[Pattern]:
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     q = (
         db.query(Pattern)
         .filter(
@@ -202,7 +202,7 @@ def upsert_baseline(db: Session, home_id: str, fingerprint: str, pattern_type: s
         .filter(Baseline.home_id == home_id, Baseline.fingerprint == fingerprint)
         .first()
     )
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     if bl:
         bl.occurrence_count += 1
         bl.last_seen = now
@@ -227,7 +227,7 @@ def get_baseline_comparison(db: Session, home_id: str, days: int = 7) -> dict:
     """Return per-day activity vs. historical baseline for the last N days."""
     from sqlalchemy import func
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     start_date = now - timedelta(days=days)
 
     # Actual event counts for the requested window

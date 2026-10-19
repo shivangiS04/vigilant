@@ -28,7 +28,7 @@ Most Ring setups send 50+ daily alerts. People stop reading them. Real threats g
 
 VIGILANT fixes this by watching *sequences* of events instead of individual triggers. It learns your home's normal behavior over time (person leaves at 8 AM, returns at 5:30 PM, always through the front door) and only alerts you when something meaningfully deviates from that baseline.
 
-The core idea: a fruit fly's brain tunes out boring repeated stimuli and snaps to attention when something genuinely new happens. We implemented that same four-layer attention model (called **MOTIF**) on top of Ring event data, with AWS Bedrock generating the human-readable explanation.
+The core idea comes from neuroscience: Barlow (1961) proposed that sensory neurons are efficient encoders — they respond strongly to novel stimuli and suppress responses to repeated, predictable ones. The fruit fly olfactory system is a well-studied example of this: the fly's mushroom body rapidly habituates to familiar odors and snaps to attention when a genuinely new smell appears, even after hours of the familiar one. We implemented that same four-layer attention model (called **MOTIF**) on top of Ring event data — the system habituates to your home's normal rhythms and fires only when something deviates in a way that would have mattered in a real nervous system. AWS Bedrock then turns that score into a plain-language explanation.
 
 ---
 
@@ -38,9 +38,9 @@ The core idea: a fruit fly's brain tunes out boring repeated stimuli and snaps t
 Ring Events → MOTIF Engine → Salience Score → Bedrock Explanation → Dashboard
 ```
 
-1. **Ring Integration** polls for events (person, motion, vehicle, doorbell) across all cameras.
+1. **Ring Integration** delivers events (person, motion, vehicle, doorbell) via signed webhooks across all cameras.
 2. **MOTIF Engine** groups events into sequences and scores each on four axes.
-3. If salience > 6.0, the pattern is **flagged** and sent to **AWS Bedrock** (Claude 3 Sonnet) for a natural-language explanation.
+3. If salience > 6.0, the pattern is **flagged** and sent to **AWS Bedrock** (Claude 3.5 Haiku) for a natural-language explanation.
 4. Low-salience patterns (< 4.0) are **auto-learned** as "normal" and written to the baseline DB.
 5. The **React dashboard** shows flagged patterns with explanations, score breakdowns, and the raw event timeline.
 
@@ -79,7 +79,19 @@ Patterns ≥ 6.0 get flagged and explained. Everything below is recorded silentl
 | `loitering` | 3+ motion events with no clear departure |
 | `delivery` | Vehicle detected → person detected sequence |
 | `multi_camera_activity` | Activity across 3+ cameras in a short window |
+| `late_first_activity` | First event of the day at a primary entrance after 2 PM with no person detected — useful for caretaking |
+| `late_night_activity` | Person detected between 11 PM and 5 AM |
 | `standard_activity` | Normal, unclassified sequence |
+
+---
+
+## Who This Is For
+
+**Families with elderly or solo-living parents.** A parent who always opens the front door by 8:30 AM and hasn't by noon is an important signal. VIGILANT detects that change in routine (the `late_first_activity` pattern) and flags it — not because someone triggered a sensor, but because the expected pattern is absent.
+
+**People who've stopped reading Ring alerts.** If you've turned off Ring notifications because they were too frequent, VIGILANT is designed for you. It reads all 50 daily alerts so you don't have to, and surfaces only the sequences that actually deviate.
+
+**Anyone in a home with a specific daily rhythm.** VIGILANT learns your rhythm — not a generic "usual pattern" — and flags deviations from it. It gets more accurate with every correction you make.
 
 ---
 
@@ -349,23 +361,17 @@ Official endpoint, token, nonce, event and signature behavior is documented at [
 
 ---
 
-## Alexa Integration
+## Planned: Alexa Voice Announcements
 
-VIGILANT fires an AWS Lambda (`vigilant-alexa-announcer`) whenever a pattern is flagged (salience ≥ 6.0). The Lambda builds a voice message and can be wired to any Alexa Proactive Events endpoint.
+The Lambda handler (`backend/alexa_integration/lambda_handler.py`) and client (`backend/alexa_integration/client.py`) are written and tested locally. The integration is **disabled by default** (`ALEXA_ENABLED=false`) and makes no Alexa calls in the current deployment.
 
-**To deploy:**
+Completing the integration requires:
+1. Alexa Developer Console: create a skill with Proactive Events permissions and submit it for certification
+2. Ring Portal: register the Alexa skill link under the app's Alexa integration settings
+3. AWS Lambda: deploy `lambda_handler.py` as `vigilant-alexa-announcer`
+4. Set `ALEXA_ENABLED=true` in backend env vars once the skill is certified
 
-1. Create a Lambda function named `vigilant-alexa-announcer` (Python 3.11)
-2. Copy `backend/alexa_integration/lambda_handler.py` into the Lambda editor and deploy
-3. Set env vars:
-   ```bash
-   ALEXA_ENABLED=true
-   ALEXA_LAMBDA_FUNCTION=vigilant-alexa-announcer
-   AWS_ACCESS_KEY_ID=...
-   AWS_SECRET_ACCESS_KEY=...
-   ```
-
-The integration silently fails if the Lambda is unavailable — core detection is never blocked.
+This is tracked as future work. The core detection pipeline (Ring → MOTIF → Bedrock) is fully functional without it.
 
 ---
 
@@ -373,7 +379,9 @@ The integration silently fails if the Lambda is unavailable — core detection i
 
 File: `backend/bedrock_integration/explanation_generator.py`
 
-- Model: `anthropic.claude-3-sonnet-20240229-v1:0`
+- Model: `us.anthropic.claude-3-5-haiku-20241022-v1:0` (cross-region inference profile, us-east-1)
+- Configurable via `BEDROCK_MODEL_ID` env var
+- Uses Converse API (`client.converse(...)`) — cleaner than raw `invoke_model`
 - Max tokens: 150 (keeps explanations tight)
 - Temperature: 0.3 (consistent, not creative)
 - Tone adjusts automatically by salience:
@@ -382,12 +390,22 @@ File: `backend/bedrock_integration/explanation_generator.py`
   - Salience < 4 → low-key FYI ("Just flagged as slightly unusual")
 - Explanations cached by `(pattern_type, salience_bucket)` for 6 hours
 - If Bedrock is unavailable, dashboard degrades gracefully — pattern shown, explanation blank
+- Requires model access to be enabled in the Bedrock console for your account
 
 Add to `.env` to enable:
 ```
 AWS_ACCESS_KEY_ID=your_key
 AWS_SECRET_ACCESS_KEY=your_secret
 AWS_DEFAULT_REGION=us-east-1
+```
+
+IAM minimum permissions:
+```json
+{
+  "Effect": "Allow",
+  "Action": ["bedrock:InvokeModel"],
+  "Resource": "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0"
+}
 ```
 
 ---
@@ -430,13 +448,15 @@ DATABASE_URL=postgresql://postgres:vigilant@localhost:5432/vigilant
 - [x] React dashboard — Patterns / Analytics / Events tabs, 30s polling
 - [x] Pattern detail view — click any card for score breakdown + explanation
 - [x] **7-day baseline comparison chart** — AreaChart with color-coded dots, flag badges, responsive
-- [x] **Alexa integration** — Lambda function + AlexaClient; fires on every flagged pattern
-- [x] Demo seed endpoint for instant UI testing
+- [x] Demo seed endpoint for instant UI testing (simulator mode only, labeled `[Sample]`)
 - [x] Vercel deployment — frontend + backend both live
+- [x] CI pipeline — GitHub Actions, 63 tests passing
+- [x] FRICTION_LOG.md — real dev issues documented
 
-### Next Up
-- [ ] Deploy Alexa Lambda to AWS + enable Proactive Events API in skill
+### Next Up / Planned
+- [ ] **Alexa voice announcements** — Lambda handler + AlexaClient are written; skill certification and Proactive Events API setup are the remaining steps (see [Planned: Alexa Voice Announcements](#planned-alexa-voice-announcements))
 - [ ] Persistent Postgres on Vercel (Supabase/Neon — just set `DATABASE_URL`)
+- [ ] Push notifications via SNS for flagged patterns when homeowner is away
 
 ---
 

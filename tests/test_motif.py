@@ -1,7 +1,7 @@
 """Tests for the MOTIF engine — the core of VIGILANT."""
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from backend.motif_engine.motif_core import MotifEngine, RingEvent, MotifScore
 
 
@@ -9,7 +9,7 @@ def make_event(camera, type_, minutes_ago=0, confidence=0.95):
     return RingEvent(
         camera=camera,
         type=type_,
-        timestamp=datetime.utcnow() - timedelta(minutes=minutes_ago),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=minutes_ago),
         confidence=confidence,
     )
 
@@ -83,7 +83,7 @@ def test_old_events_lower_temporal_weight(engine):
 # ------------------------------------------------------------------
 
 def test_classifies_rapid_return(engine):
-    t = datetime.utcnow()
+    t = datetime.now(timezone.utc).replace(tzinfo=None)
     events = [
         RingEvent("front_door", "person_detected", t, 0.95),
         RingEvent("front_door", "motion_detected", t + timedelta(minutes=1), 0.90),
@@ -100,7 +100,7 @@ def test_classifies_unusual_entrance(engine):
 
 
 def test_classifies_delivery(engine):
-    t = datetime.utcnow()
+    t = datetime.now(timezone.utc).replace(tzinfo=None)
     events = [
         RingEvent("driveway", "vehicle_detected", t, 0.90),
         RingEvent("front_door", "person_detected", t + timedelta(minutes=2), 0.92),
@@ -110,7 +110,7 @@ def test_classifies_delivery(engine):
 
 
 def test_classifies_loitering(engine):
-    t = datetime.utcnow()
+    t = datetime.now(timezone.utc).replace(tzinfo=None)
     events = [
         RingEvent("front_door", "motion_detected", t, 0.85),
         RingEvent("front_door", "motion_detected", t + timedelta(minutes=2), 0.82),
@@ -125,14 +125,14 @@ def test_classifies_loitering(engine):
 # ------------------------------------------------------------------
 
 def test_same_sequence_same_fingerprint(engine):
-    t = datetime.utcnow()
+    t = datetime.now(timezone.utc).replace(tzinfo=None)
     e1 = [RingEvent("front_door", "person_detected", t, 0.95)]
     e2 = [RingEvent("front_door", "person_detected", t, 0.80)]  # diff confidence, same structure
     assert engine._fingerprint(e1) == engine._fingerprint(e2)
 
 
 def test_different_cameras_different_fingerprint(engine):
-    t = datetime.utcnow()
+    t = datetime.now(timezone.utc).replace(tzinfo=None)
     e1 = [RingEvent("front_door", "person_detected", t, 0.95)]
     e2 = [RingEvent("back_door", "person_detected", t, 0.95)]
     assert engine._fingerprint(e1) != engine._fingerprint(e2)
@@ -140,7 +140,7 @@ def test_different_cameras_different_fingerprint(engine):
 
 def test_fuzzy_novelty_similar_sequence_scores_lower(engine):
     """A near-identical sequence should have lower novelty than a completely alien one."""
-    t = datetime.utcnow()
+    t = datetime.now(timezone.utc).replace(tzinfo=None)
     known = [
         RingEvent("front_door", "person_detected", t, 0.95),
         RingEvent("front_door", "motion_detected", t + timedelta(minutes=1), 0.90),

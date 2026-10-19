@@ -1,7 +1,7 @@
 import threading
 import uuid
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from backend.database import repository as repo
@@ -78,7 +78,7 @@ class RingEventPipeline:
                 "competition_score": score.competition,
                 "flagged": score.flagged,
                 "explanation": explanation,
-                "detected_at": datetime.utcnow().isoformat(),
+                "detected_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 "event_ids": [item.event_id for item in window],
             }
             with get_db() as db:
