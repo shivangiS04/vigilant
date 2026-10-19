@@ -44,20 +44,21 @@ export function EventTimeline({ homeId }) {
 }
 
 const styles = {
-  container: { fontFamily: "monospace", maxWidth: 600 },
+  container: { fontFamily: "monospace", maxWidth: 600, overflowX: "hidden" },
   heading: { fontSize: 16, marginBottom: 8 },
   row: {
     display: "flex",
-    gap: 12,
+    gap: 8,
     padding: "6px 0",
     borderBottom: "1px solid #eee",
     alignItems: "center",
+    minWidth: 0,
   },
-  icon: { fontSize: 18, width: 24 },
-  time: { color: "#666", width: 56, flexShrink: 0 },
-  camera: { flex: 1, textTransform: "capitalize" },
-  type: { flex: 1, color: "#333", textTransform: "capitalize" },
-  confidence: { color: "#888", width: 40, textAlign: "right" },
+  icon: { fontSize: 18, width: 20, flexShrink: 0 },
+  time: { color: "#666", width: 52, flexShrink: 0, fontSize: 12 },
+  camera: { flex: 1, textTransform: "capitalize", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  type: { flex: 1, color: "#333", textTransform: "capitalize", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  confidence: { color: "#888", width: 36, textAlign: "right", flexShrink: 0, fontSize: 12 },
   state: { color: "#666", padding: 16 },
   stateError: { color: "#c00", padding: 16 },
 };

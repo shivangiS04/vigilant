@@ -142,7 +142,7 @@ function salienceColor(v) {
 }
 
 const s = {
-  card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "20px 16px 16px", marginBottom: 16 },
+  card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "20px 16px 16px", marginBottom: 16, overflowX: "hidden" },
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   title: { margin: 0, fontSize: 16, fontWeight: 700, color: "#1a202c" },
   date: { fontSize: 12, color: "#a0aec0" },
