@@ -5,6 +5,7 @@ All state is persisted to SQLite (dev) or Postgres (prod).
 
 import hmac
 import json
+import logging
 import os
 import secrets
 import uuid
@@ -12,6 +13,9 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import List, Optional
 from urllib.parse import parse_qs
+
+logger = logging.getLogger("vigilant.ring")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,6 +68,23 @@ motif = MotifEngine()
 bedrock = ExplanationGenerator()
 alexa = AlexaClient()
 ring_pipeline = RingEventPipeline(motif, bedrock, alexa)
+
+# In-memory: last 5 link attempts for /ring/status visibility.
+# Not persisted across restarts but survives within one Vercel function instance.
+_link_attempts: list = []
+
+
+def _record_link_attempt(correlation_id: str, step: str, ok: bool, error: str = "") -> None:
+    entry = {
+        "at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        "correlation_id": correlation_id,
+        "step": step,
+        "ok": ok,
+        "error": error,
+    }
+    _link_attempts.append(entry)
+    if len(_link_attempts) > 5:
+        _link_attempts.pop(0)
 
 
 @app.on_event("startup")
@@ -183,6 +204,11 @@ def health():
                 "url_type": "postgres" if (os.getenv("DATABASE_URL") or "").startswith("postgresql") else "sqlite",
             },
             "ring_integration_mode": os.getenv("RING_INTEGRATION_MODE", "official"),
+            "warnings": (
+                ["RING_INTEGRATION_MODE=simulator — production should use official mode"]
+                if os.getenv("RING_INTEGRATION_MODE", "official").lower() == "simulator"
+                else []
+            ),
         },
     }
 
@@ -280,10 +306,16 @@ def ring_homepage(request: Request):
 
 @app.get("/ring/link", response_class=HTMLResponse)
 def ring_account_link(request: Request, time: str = Query(...), nonce: str = Query(...)):
+    cid = uuid.uuid4().hex[:8]
+    logger.info("[%s] ring/link: callback received time=%s nonce_len=%d", cid, time, len(nonce))
     if not _partner_signin_ready():
+        logger.error("[%s] ring/link: partner sign-in not configured (RING_SESSION_SECRET/VIGILANT_ACCOUNT_EMAIL/VIGILANT_ACCOUNT_PASSWORD_HASH)", cid)
+        _record_link_attempt(cid, "account_link_callback", False, "partner sign-in not configured")
         raise HTTPException(status_code=503, detail="Vigilant account sign-in is not configured")
-    request.session["pending_ring_link"] = {"time": time, "nonce": nonce}
+    request.session["pending_ring_link"] = {"time": time, "nonce": nonce, "cid": cid}
     _csrf_token(request)
+    logger.info("[%s] ring/link: nonce stored in session, showing sign-in page", cid)
+    _record_link_attempt(cid, "account_link_callback", True)
     return HTMLResponse(_ring_homepage(request))
 
 
@@ -313,15 +345,23 @@ async def ring_partner_login(request: Request):
 
 @app.post("/ring/link/claim", response_class=HTMLResponse)
 async def ring_link_claim(request: Request):
+    pending = request.session.get("pending_ring_link") or {}
+    cid = pending.get("cid") or uuid.uuid4().hex[:8]
     if not request.session.get("partner_user_id"):
+        logger.warning("[%s] ring/link/claim: no partner_user_id in session (sign-in not completed)", cid)
+        _record_link_attempt(cid, "claim", False, "not signed in to Vigilant")
         raise HTTPException(status_code=401, detail="Sign in to Vigilant before linking Ring")
     form = await _read_form(request)
     if not _valid_csrf(request, str(form.get("csrf_token", ""))):
+        logger.warning("[%s] ring/link/claim: CSRF mismatch", cid)
+        _record_link_attempt(cid, "claim", False, "CSRF mismatch")
         raise HTTPException(status_code=403, detail="Invalid account-link request")
-    pending = request.session.get("pending_ring_link")
     if not pending:
+        logger.warning("[%s] ring/link/claim: no pending_ring_link in session", cid)
+        _record_link_attempt(cid, "claim", False, "no pending link in session")
         raise HTTPException(status_code=400, detail="No Ring account-link request is pending")
 
+    logger.info("[%s] ring/link/claim: starting claim (time=%s)", cid, pending.get("time"))
     try:
         with get_db() as db:
             account = await run_in_threadpool(
@@ -333,40 +373,63 @@ async def ring_link_claim(request: Request):
                 db,
             )
             account_id = account.account_id
+        logger.info("[%s] ring/link/claim: account %s… linked ok", cid, account_id[:4] if account_id else "?")
+        _record_link_attempt(cid, "claim", True)
     except ValueError as exc:
+        logger.error("[%s] ring/link/claim: nonce/account error — %s", cid, exc)
+        _record_link_attempt(cid, "claim", False, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
+        logger.error("[%s] ring/link/claim: config error — %s", cid, exc)
+        _record_link_attempt(cid, "claim", False, str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except RingPartnerAPIError as exc:
+        logger.error("[%s] ring/link/claim: Ring API error — %s", cid, exc)
+        _record_link_attempt(cid, "claim", False, str(exc))
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     request.session.pop("pending_ring_link", None)
     return HTMLResponse(_ring_homepage(request, "Ring account linked: " + escape(account_id)))
 
 
-def _receive_ring_code(code: str) -> str:
+def _receive_ring_code(code: str) -> str:  # returns account_id
     with get_db() as db:
         return receive_authorization_code(code, db)
 
 
 @app.post("/ring/token")
 async def ring_token_exchange(request: Request):
+    cid = uuid.uuid4().hex[:8]
+    logger.info("[%s] ring/token: request received from %s", cid, request.client.host if request.client else "unknown")
     values = await _read_form(request)
     expected_client_id = os.getenv("RING_CLIENT_ID", "")
     supplied_client_id = values.get("client_id")
     if not expected_client_id or not isinstance(supplied_client_id, str):
+        logger.warning("[%s] ring/token: missing client_id", cid)
+        _record_link_attempt(cid, "token_exchange", False, "missing client_id")
         raise HTTPException(status_code=401, detail="Missing Ring client ID")
     if not hmac.compare_digest(supplied_client_id, expected_client_id):
+        logger.warning("[%s] ring/token: client_id mismatch (len=%d vs expected len=%d)", cid, len(supplied_client_id), len(expected_client_id))
+        _record_link_attempt(cid, "token_exchange", False, "client_id mismatch")
         raise HTTPException(status_code=401, detail="Unexpected Ring client ID")
     code = values.get("code") or values.get("authorization_code")
     if not isinstance(code, str) or not code:
+        logger.warning("[%s] ring/token: missing authorization code", cid)
+        _record_link_attempt(cid, "token_exchange", False, "missing authorization code")
         raise HTTPException(status_code=400, detail="Missing Ring authorization code")
 
+    logger.info("[%s] ring/token: client_id ok, code present (len=%d), calling Ring OAuth", cid, len(code))
     try:
-        await run_in_threadpool(_receive_ring_code, code)
+        account_id = await run_in_threadpool(_receive_ring_code, code)
+        logger.info("[%s] ring/token: tokens stored for account %s…", cid, account_id[:4] if account_id else "?")
+        _record_link_attempt(cid, "token_exchange", True)
     except RuntimeError as exc:
+        logger.error("[%s] ring/token: config error — %s", cid, exc)
+        _record_link_attempt(cid, "token_exchange", False, str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except RingPartnerAPIError as exc:
+        logger.error("[%s] ring/token: Ring API error — %s", cid, exc)
+        _record_link_attempt(cid, "token_exchange", False, str(exc))
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"status": "accepted"}
 
@@ -526,8 +589,8 @@ def ring_status():
                 {"id": c.id, "name": c.name, "home_id": c.home_id}
                 for c in cameras
             ]
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("ring_status DB query failed: %s", _e)
 
     return {
         "ring_configured": bool(
@@ -540,6 +603,7 @@ def ring_status():
         "linked_account_count": len(linked_accounts),
         "devices": devices,
         "last_webhook": last_webhook,
+        "last_link_attempt": _link_attempts[-1] if _link_attempts else None,
         "mode": os.getenv("RING_INTEGRATION_MODE", "official"),
     }
 
