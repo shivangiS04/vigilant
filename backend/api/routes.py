@@ -252,16 +252,59 @@ async def _read_form(request: Request) -> dict:
     return {key: values[-1] for key, values in parsed.items()}
 
 
-def _signin_form(csrf_token: str) -> str:
+_LINK_CSS = """
+:root{--bg:#f8fafc;--fg:#1a202c;--card:#fff;--border:#e2e8f0;--accent:#4f46e5;--accent-fg:#fff;--muted:#718096;--err:#e53e3e;color-scheme:light}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f172a;--fg:#e2e8f0;--card:#1e293b;--border:#334155;--accent:#818cf8;--accent-fg:#0f172a;--muted:#94a3b8;--err:#fc8181;color-scheme:dark}}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:1.5rem max(1rem,env(safe-area-inset-left,0px))}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:2rem;width:100%;max-width:440px}
+.logo{font-size:1.4rem;font-weight:700;letter-spacing:-.02em;color:var(--accent);margin-bottom:.25rem}
+.tagline{font-size:.85rem;color:var(--muted);margin-bottom:1.75rem}
+h2{font-size:1.1rem;font-weight:600;margin-bottom:1rem}
+.field{display:flex;flex-direction:column;gap:.3rem;margin-bottom:1rem}
+label{font-size:.85rem;font-weight:500;color:var(--muted)}
+input{background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:7px;padding:.6rem .8rem;font-size:1rem;width:100%;outline:none}
+input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent)}
+.btn{background:var(--accent);color:var(--accent-fg);border:none;border-radius:7px;padding:.65rem 1.25rem;font-size:.95rem;font-weight:600;width:100%;cursor:pointer;margin-top:.5rem}
+.btn:hover{opacity:.9}
+.consent{font-size:.8rem;color:var(--muted);margin-top:1.25rem;line-height:1.5}
+.msg{background:color-mix(in srgb,var(--accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);border-radius:7px;padding:.75rem 1rem;font-size:.9rem;margin-bottom:1rem}
+.err{background:color-mix(in srgb,var(--err) 12%,transparent);border:1px solid color-mix(in srgb,var(--err) 30%,transparent);border-radius:7px;padding:.75rem 1rem;font-size:.9rem;color:var(--err);margin-bottom:1rem}
+footer{margin-top:1.5rem;font-size:.78rem;color:var(--muted);text-align:center}
+footer a{color:var(--muted);text-decoration:underline}
+"""
+
+
+def _link_page(title: str, body: str) -> str:
     return (
-        "<!doctype html><html><head><title>Vigilant sign in</title></head><body>"
-        "<main><h1>Sign in to Vigilant</h1>"
+        "<!doctype html><html lang=en><head>"
+        f"<meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{escape(title)}</title>"
+        f"<style>{_LINK_CSS}</style></head><body>"
+        f"<div class=card>{body}</div>"
+        "<footer><a href=/privacy>Privacy</a></footer>"
+        "</body></html>"
+    )
+
+
+def _signin_form(csrf_token: str) -> str:
+    body = (
+        "<div class=logo>VIGILANT</div>"
+        "<div class=tagline>Behavioral intelligence for connected homes</div>"
+        "<h2>Sign in to continue</h2>"
         "<form method=post action=/ring/login>"
         f"<input type=hidden name=csrf_token value=\"{escape(csrf_token, quote=True)}\">"
-        "<label>Email <input type=email name=email required autocomplete=username></label>"
-        "<label>Password <input type=password name=password required autocomplete=current-password></label>"
-        "<button type=submit>Sign in</button></form></main></body></html>"
+        "<div class=field><label for=email>Email</label>"
+        "<input id=email type=email name=email required autocomplete=username placeholder=you@example.com></div>"
+        "<div class=field><label for=password>Password</label>"
+        "<input id=password type=password name=password required autocomplete=current-password></div>"
+        "<button class=btn type=submit>Sign in</button>"
+        "</form>"
+        "<p class=consent>VIGILANT will request read access to your Ring device events "
+        "to learn your home's normal activity patterns. No video or audio is accessed. "
+        "You can unlink at any time. <a href=/privacy>Privacy policy</a>.</p>"
     )
+    return _link_page("Vigilant — Sign in", body)
 
 
 def _ring_homepage(request: Request, message: str = "") -> str:
@@ -271,13 +314,21 @@ def _ring_homepage(request: Request, message: str = "") -> str:
     csrf = escape(_csrf_token(request), quote=True)
     pending = request.session.get("pending_ring_link")
     if pending:
-        return (
-            "<!doctype html><html><head><title>Link Ring to Vigilant</title></head><body>"
-            "<main><h1>Link Ring to Vigilant</h1>"
-            "<p>Confirm linking the Ring account authorized in the Ring app.</p>"
+        body = (
+            "<div class=logo>VIGILANT</div>"
+            "<div class=tagline>Behavioral intelligence for connected homes</div>"
+            "<h2>Link your Ring account</h2>"
+            "<div class=msg>A Ring account authorization is waiting for confirmation.</div>"
+            "<p style='font-size:.9rem;margin-bottom:1rem'>By confirming, you authorize VIGILANT to receive "
+            "motion and doorbell event notifications from your Ring devices. "
+            "VIGILANT processes event <em>sequences</em> — not video or audio — to detect "
+            "behavioral patterns that deviate from your home's learned baseline.</p>"
             f"<form method=post action=/ring/link/claim><input type=hidden name=csrf_token value=\"{csrf}\">"
-            "<button type=submit>Confirm Ring account link</button></form></main></body></html>"
+            "<button class=btn type=submit>Confirm Ring account link</button></form>"
+            "<p class=consent>You can remove access at any time via the Ring app or by contacting VIGILANT. "
+            "<a href=/privacy>Privacy policy</a>.</p>"
         )
+        return _link_page("VIGILANT — Link Ring account", body)
 
     with get_db() as db:
         accounts = (
@@ -286,18 +337,30 @@ def _ring_homepage(request: Request, message: str = "") -> str:
             .all()
         )
     connected = sum(1 for account in accounts if account.status == "completed")
-    status = escape(message or "Connected Ring account(s): {0}".format(connected))
-    return (
-        "<!doctype html><html><head><title>Vigilant Ring settings</title></head><body>"
-        f"<main><h1>Vigilant</h1><p>{status}</p>"
-        "<p>Manage device access in the Ring app.</p></main></body></html>"
+    msg_html = (
+        f"<div class=msg>{escape(message)}</div>" if message
+        else f"<div class=msg>{connected} Ring account{'s' if connected != 1 else ''} connected.</div>"
     )
+    body = (
+        "<div class=logo>VIGILANT</div>"
+        "<div class=tagline>Behavioral intelligence for connected homes</div>"
+        "<h2>Ring connection</h2>"
+        + msg_html +
+        "<p style='font-size:.9rem'>Manage device permissions in the Ring app. "
+        "<a href=/privacy>Privacy policy</a>.</p>"
+    )
+    return _link_page("VIGILANT — Ring settings", body)
 
 
 @app.get("/ring", response_class=HTMLResponse)
 def ring_homepage(request: Request):
     if not _partner_signin_ready():
-        return HTMLResponse("<h1>Ring linking is not configured</h1>", status_code=503)
+        body = (
+            "<div class=logo>VIGILANT</div>"
+            "<div class=tagline>Behavioral intelligence for connected homes</div>"
+            "<div class=err>Ring account linking is not configured on this server.</div>"
+        )
+        return HTMLResponse(_link_page("VIGILANT — Not configured", body), status_code=503)
     return HTMLResponse(_ring_homepage(request))
 
 

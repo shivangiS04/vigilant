@@ -142,3 +142,32 @@ def test_demo_seed_explanations_rule_based(simulator_client):
                 f"Explanation must not have [Sample] prefix: {p['explanation'][:60]}"
             )
             assert len(p["explanation"]) > 20
+
+
+def test_ring_link_not_configured_returns_503(client):
+    """When partner credentials are missing, /ring and /ring/link return 503 HTML with VIGILANT branding."""
+    res = client.get("/ring")
+    assert res.status_code == 503
+    assert "VIGILANT" in res.text
+    assert "not configured" in res.text.lower()
+
+
+def test_ring_link_503_is_html_page(client):
+    """/ring 503 response must be a full HTML document, not a bare string."""
+    res = client.get("/ring")
+    assert res.status_code == 503
+    assert "<!doctype html" in res.text.lower()
+    assert "<title>" in res.text.lower()
+    assert "privacy" in res.text.lower()
+
+
+def test_ring_link_callback_missing_nonce_returns_422(client):
+    """/ring/link requires time and nonce query params per Ring Partner API spec."""
+    res = client.get("/ring/link")
+    assert res.status_code == 422
+
+
+def test_ring_link_callback_unconfigured_returns_503(client):
+    """/ring/link without credentials set returns 503 (not 500)."""
+    res = client.get("/ring/link?time=1234567890&nonce=testnonce")
+    assert res.status_code == 503
