@@ -90,9 +90,9 @@ DATABASE_URL=<Neon connection string — postgresql://...>
 DEMO_SEED_TOKEN=<generate with: python -c "import secrets; print(secrets.token_urlsafe(32))">
 ```
 
-These must be set from the Ring Developer Portal (do not commit real values):
+The previously committed Ring credentials were exposed and must be rotated in the Ring Developer Portal before use. Set the replacements in Vercel only; do not commit real values:
 ```
-RING_CLIENT_ID=<Ring Developer Portal Client ID>
+RING_CLIENT_ID=[REDACTED — rotate in Ring Developer Portal before use]
 RING_CLIENT_SECRET=[REDACTED — rotate in Ring Developer Portal before use]
 RING_HMAC_SIGNING_KEY=[REDACTED — rotate in Ring Developer Portal before use]
 RING_INTEGRATION_MODE=official

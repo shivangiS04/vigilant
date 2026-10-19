@@ -501,12 +501,15 @@ async def ring_token_exchange(request: Request):
     values = await _read_form(request)
     expected_client_id = os.getenv("RING_CLIENT_ID", "")
     supplied_client_id = values.get("client_id")
-    if not expected_client_id or not isinstance(supplied_client_id, str):
-        logger.warning("[%s] ring/token: missing client_id", cid)
-        _record_link_attempt(cid, "token_exchange", False, "missing client_id")
-        raise HTTPException(status_code=401, detail="Missing Ring client ID")
-    if not hmac.compare_digest(supplied_client_id, expected_client_id):
-        logger.warning("[%s] ring/token: client_id mismatch (len=%d vs expected len=%d)", cid, len(supplied_client_id), len(expected_client_id))
+    if not expected_client_id:
+        logger.error("[%s] ring/token: RING_CLIENT_ID not configured", cid)
+        _record_link_attempt(cid, "token_exchange", False, "RING_CLIENT_ID not configured")
+        raise HTTPException(status_code=503, detail="Ring client ID is not configured")
+    if supplied_client_id is not None and (
+        not isinstance(supplied_client_id, str)
+        or not hmac.compare_digest(supplied_client_id, expected_client_id)
+    ):
+        logger.warning("[%s] ring/token: client_id mismatch", cid)
         _record_link_attempt(cid, "token_exchange", False, "client_id mismatch")
         raise HTTPException(status_code=401, detail="Unexpected Ring client ID")
     code = values.get("code") or values.get("authorization_code")

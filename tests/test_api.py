@@ -101,6 +101,28 @@ def test_ring_status(client):
     assert "mode" in body
 
 
+def test_ring_token_exchange_accepts_code_without_client_id(client, monkeypatch):
+    monkeypatch.setenv("RING_CLIENT_ID", "configured-client")
+    with patch("backend.api.routes._receive_ring_code") as receive_code:
+        res = client.post("/ring/token", data={"code": "one-time-code"})
+
+    assert res.status_code == 200
+    assert res.json() == {"status": "accepted"}
+    receive_code.assert_called_once_with("one-time-code")
+
+
+def test_ring_token_exchange_rejects_mismatched_client_id(client, monkeypatch):
+    monkeypatch.setenv("RING_CLIENT_ID", "configured-client")
+    with patch("backend.api.routes._receive_ring_code") as receive_code:
+        res = client.post(
+            "/ring/token",
+            data={"client_id": "different-client", "code": "one-time-code"},
+        )
+
+    assert res.status_code == 401
+    receive_code.assert_not_called()
+
+
 def test_demo_seed_disabled_in_official_mode(client):
     """/demo/seed must return 404 when not in simulator mode."""
     with patch.dict(os.environ, {"RING_INTEGRATION_MODE": "official"}):
