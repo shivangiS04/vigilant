@@ -41,12 +41,31 @@ export function RingStatus() {
         </span>
       </div>
 
-      {status.devices.length > 0 && (
+      <div style={styles.row}>
+        <span style={styles.label}>Devices</span>
+        {linked && status.devices.length > 0 ? (
+          <>
+            <span style={{ ...dot(true), background: "#3182ce" }} />
+            <span style={styles.dim}>
+              {status.devices.map((d) => d.name).join(" · ")}
+            </span>
+          </>
+        ) : (
+          <>
+            <span style={dot(false)} />
+            <span style={styles.warn}>
+              {linked ? "No devices reported yet" : "No Ring devices — link your account"}
+            </span>
+          </>
+        )}
+      </div>
+
+      {status.simulator_device_count > 0 && (
         <div style={styles.row}>
-          <span style={styles.label}>Devices</span>
-          <span style={{ ...dot(true), background: "#3182ce" }} />
+          <span style={styles.label}>Sample data</span>
+          <span style={{ ...dot(false), background: "#ed8936" }} />
           <span style={styles.dim}>
-            {status.devices.map((d) => d.name).join(" · ")}
+            {status.simulator_device_count} simulated camera{status.simulator_device_count !== 1 ? "s" : ""} in DB — not from Ring
           </span>
         </div>
       )}

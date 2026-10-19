@@ -206,3 +206,31 @@ def test_webhook_body_too_large_returns_413(monkeypatch):
             headers={"content-type": "application/json", "x-signature": "fakesig"},
         )
     assert res.status_code == 413
+
+
+def test_ring_status_devices_empty_without_linked_account(simulator_client):
+    """Devices list must be empty even when simulator data exists in the DB.
+
+    Ring cameras created by demo-seed have no linked RingAccount, so they must
+    never appear under the Ring 'devices' key.  They should instead be counted
+    in 'simulator_device_count'.
+    """
+    import uuid
+    home_id = f"devtest_{uuid.uuid4().hex[:6]}"
+    # Seed creates Camera rows for front_door / driveway / side_door / backyard
+    seed_res = simulator_client.post(f"/demo/seed?home_id={home_id}")
+    assert seed_res.status_code == 200
+
+    status_res = simulator_client.get("/ring/status")
+    assert status_res.status_code == 200
+    body = status_res.json()
+
+    # Cameras from the seeded (unlinked) home must not appear in the Ring devices list
+    device_home_ids = {d["home_id"] for d in body["devices"]}
+    assert home_id not in device_home_ids, (
+        f"Demo-seeded cameras from unlinked home {home_id!r} appeared in devices list: {body['devices']}"
+    )
+    # They should be counted as simulator data instead
+    assert body["simulator_device_count"] > 0, (
+        "Expected simulator_device_count > 0 after seeding demo data"
+    )

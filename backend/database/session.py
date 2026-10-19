@@ -38,6 +38,10 @@ def init_db():
         _make_event_confidence_nullable()
     except Exception:
         pass
+    try:
+        _add_event_source_column()
+    except Exception:
+        pass
 
 
 def _make_event_confidence_nullable(database_engine=engine):
@@ -94,6 +98,25 @@ def _make_event_confidence_nullable(database_engine=engine):
     finally:
         cursor.close()
         raw_connection.close()
+
+
+def _add_event_source_column(database_engine=engine):
+    """Add the nullable `source` column to ring_events if it doesn't exist yet."""
+    if "ring_events" not in inspect(database_engine).get_table_names():
+        return
+    if database_engine.dialect.name == "postgresql":
+        with database_engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE ring_events ADD COLUMN IF NOT EXISTS source VARCHAR")
+            )
+        return
+    # SQLite: nullable column can be added directly
+    with database_engine.connect() as connection:
+        columns = connection.exec_driver_sql("PRAGMA table_info(ring_events)").fetchall()
+    if any(col[1] == "source" for col in columns):
+        return
+    with database_engine.begin() as connection:
+        connection.exec_driver_sql("ALTER TABLE ring_events ADD COLUMN source VARCHAR")
 
 
 @contextmanager
