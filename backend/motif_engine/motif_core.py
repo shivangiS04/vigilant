@@ -2,6 +2,26 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta, timezone
 import math
+import os
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
+
+
+def _home_tz() -> ZoneInfo:
+    """Home timezone from HOME_TIMEZONE env var (default Asia/Kolkata)."""
+    tz_name = os.getenv("HOME_TIMEZONE", "Asia/Kolkata")
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        return ZoneInfo("Asia/Kolkata")
+
+
+def _local_hour(ts: datetime) -> int:
+    """Return the hour of a naive-UTC datetime in the home's local timezone."""
+    utc_ts = ts.replace(tzinfo=timezone.utc)
+    return utc_ts.astimezone(_home_tz()).hour
 
 
 @dataclass
@@ -219,47 +239,62 @@ class MotifEngine:
         cameras = [e.camera for e in events]
         types = [e.type for e in events]
 
-        # caretaking: no activity during an expected window (≥6 hours silence after
-        # a baseline that usually has activity — detected as a long gap before the event)
-        if len(events) >= 1:
-            span_hours = (events[-1].timestamp - events[0].timestamp).total_seconds() / 3600
-            hour = events[0].timestamp.hour
-            # Morning silence: first event of day is in the afternoon, past expected wake time
-            if span_hours < 1 and hour >= 14 and "person_detected" not in types[:2]:
-                if cameras[0] in ("front_door", "side_door"):
-                    return "late_first_activity"
+        # ── high-confidence structural matches first ──────────────────────
 
-        # rapid return: left then came back quickly
+        # rapid return: left then came back quickly (same primary camera, <15 min)
         if len(events) >= 2 and cameras[0] == cameras[-1] and "person_detected" in types:
             span = (events[-1].timestamp - events[0].timestamp).total_seconds() / 60
             if span < 15:
                 return "rapid_return"
 
-        # unusual entrance: person on non-primary camera first
+        # unusual entrance: person arrives on a non-primary camera first
         if cameras[0] in ("side_door", "back_door", "garage"):
             return "unusual_entrance"
 
-        # loitering: multiple motion events, no person exit
+        # loitering: 3+ motion events without a clear departure
         motion_count = types.count("motion_detected")
         if motion_count >= 3:
             return "loitering"
 
-        # late night activity: any person detected between 11 PM and 5 AM
-        if "person_detected" in types:
-            hour = events[0].timestamp.hour
-            if hour >= 23 or hour < 5:
-                return "late_night_activity"
-
-        # package delivery: vehicle then person then leave
+        # package delivery: vehicle then person sequence (structural match beats time-of-day)
         if "vehicle_detected" in types and "person_detected" in types:
             return "delivery"
 
+        # late night: person detected between 11 PM and 5 AM (home local time)
+        if "person_detected" in types:
+            local_h = _local_hour(events[0].timestamp)
+            if local_h >= 23 or local_h < 5:
+                return "late_night_activity"
+
         # multiple cameras in short window
-        unique_cameras = set(cameras)
-        if len(unique_cameras) >= 3:
+        if len(set(cameras)) >= 3:
             return "multi_camera_activity"
 
+        # caretaking — checked last because it needs context the engine tracks.
+        # Fires only when: this is the FIRST event of the day (nothing in
+        # daily_events within the last 18h for the same session), the local
+        # time is ≥ 14:00 (past expected wake time), the sequence is short
+        # (< 1 h span), and no person was detected in the opening events.
+        # This avoids triggering on normal afternoon motion at busy homes.
+        local_h = _local_hour(events[0].timestamp)
+        span_hours = (events[-1].timestamp - events[0].timestamp).total_seconds() / 3600
+        if (
+            local_h >= 14
+            and span_hours < 1
+            and "person_detected" not in types[:2]
+            and cameras[0] in ("front_door", "side_door")
+            and self._is_first_activity_today(events[0].timestamp)
+        ):
+            return "late_first_activity"
+
         return "standard_activity"
+
+    def _is_first_activity_today(self, ts: datetime) -> bool:
+        """True when no pattern has been recorded in the last 18 hours (proxy for
+        'first event of the day').  Uses the in-memory daily_events list so it
+        works without a DB reference in the engine itself."""
+        cutoff = ts - timedelta(hours=18)
+        return not any(event_ts > cutoff for event_ts, _ in self.daily_events)
 
     def _record_pattern(self, fingerprint: str, events: List[RingEvent]):
         now = datetime.now(timezone.utc).replace(tzinfo=None)
