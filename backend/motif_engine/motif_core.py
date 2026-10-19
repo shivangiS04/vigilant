@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import math
 
 
@@ -142,7 +142,7 @@ class MotifEngine:
     def _calculate_adaptation(self, fingerprint: str) -> float:
         """Layer 2 — Sensory adaptation: how often seen? (0-10)"""
         # same-session repeat: seen before in daily_events this session
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         session_cutoff = now - timedelta(hours=24)
         session_count = sum(1 for ts, fp in self.daily_events if ts > session_cutoff and fp == fingerprint)
         if session_count >= 1:
@@ -171,7 +171,7 @@ class MotifEngine:
         if not events:
             return 0.5
         latest = max(e.timestamp for e in events)
-        age = datetime.utcnow() - latest
+        age = datetime.now(timezone.utc).replace(tzinfo=None) - latest
         minutes = age.total_seconds() / 60
 
         if minutes <= 5:
@@ -184,7 +184,7 @@ class MotifEngine:
 
     def _calculate_competition(self, events: List[RingEvent]) -> float:
         """Layer 4 — Attention competition from other patterns today (0-10)."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         cutoff = now - timedelta(hours=24)
         today_count = sum(1 for ts, _ in self.daily_events if ts > cutoff)
 
@@ -219,12 +219,21 @@ class MotifEngine:
         cameras = [e.camera for e in events]
         types = [e.type for e in events]
 
+        # caretaking: no activity during an expected window (≥6 hours silence after
+        # a baseline that usually has activity — detected as a long gap before the event)
+        if len(events) >= 1:
+            span_hours = (events[-1].timestamp - events[0].timestamp).total_seconds() / 3600
+            hour = events[0].timestamp.hour
+            # Morning silence: first event of day is in the afternoon, past expected wake time
+            if span_hours < 1 and hour >= 14 and "person_detected" not in types[:2]:
+                if cameras[0] in ("front_door", "side_door"):
+                    return "late_first_activity"
+
         # rapid return: left then came back quickly
         if len(events) >= 2 and cameras[0] == cameras[-1] and "person_detected" in types:
-            if len(events) >= 2:
-                span = (events[-1].timestamp - events[0].timestamp).total_seconds() / 60
-                if span < 15:
-                    return "rapid_return"
+            span = (events[-1].timestamp - events[0].timestamp).total_seconds() / 60
+            if span < 15:
+                return "rapid_return"
 
         # unusual entrance: person on non-primary camera first
         if cameras[0] in ("side_door", "back_door", "garage"):
@@ -234,6 +243,12 @@ class MotifEngine:
         motion_count = types.count("motion_detected")
         if motion_count >= 3:
             return "loitering"
+
+        # late night activity: any person detected between 11 PM and 5 AM
+        if "person_detected" in types:
+            hour = events[0].timestamp.hour
+            if hour >= 23 or hour < 5:
+                return "late_night_activity"
 
         # package delivery: vehicle then person then leave
         if "vehicle_detected" in types and "person_detected" in types:
@@ -247,7 +262,7 @@ class MotifEngine:
         return "standard_activity"
 
     def _record_pattern(self, fingerprint: str, events: List[RingEvent]):
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         self.daily_events.append((now, fingerprint))
         # prune old entries (keep last 48h)
         cutoff = now - timedelta(hours=48)

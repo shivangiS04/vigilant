@@ -6,10 +6,10 @@ export function useEvents(homeId = "home_001", hours = 24, pollMs = 30000) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const fetch = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     try {
       const data = await api.getEvents(homeId, hours);
-      setEvents(data.reverse()); // newest first
+      setEvents(data.reverse());
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -19,12 +19,12 @@ export function useEvents(homeId = "home_001", hours = 24, pollMs = 30000) {
   }, [homeId, hours]);
 
   useEffect(() => {
-    fetch();
-    const id = setInterval(fetch, pollMs);
+    fetchData();
+    const id = setInterval(fetchData, pollMs);
     return () => clearInterval(id);
-  }, [fetch, pollMs]);
+  }, [fetchData, pollMs]);
 
-  return { events, loading, error, refresh: fetch };
+  return { events, loading, error, refresh: fetchData };
 }
 
 export function usePatterns(homeId = "home_001", days = 7, flaggedOnly = false, pollMs = 30000) {
@@ -32,7 +32,7 @@ export function usePatterns(homeId = "home_001", days = 7, flaggedOnly = false, 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const fetch = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     try {
       const data = await api.getPatterns(homeId, days, flaggedOnly);
       setPatterns(data);
@@ -45,10 +45,34 @@ export function usePatterns(homeId = "home_001", days = 7, flaggedOnly = false, 
   }, [homeId, days, flaggedOnly]);
 
   useEffect(() => {
-    fetch();
-    const id = setInterval(fetch, pollMs);
+    fetchData();
+    const id = setInterval(fetchData, pollMs);
     return () => clearInterval(id);
-  }, [fetch, pollMs]);
+  }, [fetchData, pollMs]);
 
-  return { patterns, loading, error, refresh: fetch };
+  return { patterns, loading, error, refresh: fetchData };
+}
+
+export function useRingStatus(pollMs = 30000) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const data = await api.getRingStatus();
+      setStatus(data);
+    } catch {
+      setStatus(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    const id = setInterval(fetchData, pollMs);
+    return () => clearInterval(id);
+  }, [fetchData, pollMs]);
+
+  return { status, loading };
 }

@@ -1,25 +1,47 @@
 import boto3
 import json
 import hashlib
+import os
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
+
+
+# Default: claude-3-5-haiku — fast, cheap, available in us-east-1.
+# Override with BEDROCK_MODEL_ID env var (verify your model is enabled in the
+# Bedrock console before changing; run:
+#   aws bedrock list-foundation-models --region us-east-1 --by-provider anthropic
+# Cross-region inference profiles use the "us." prefix; regional IDs do not.
+_DEFAULT_MODEL_ID = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
 
 
 class ExplanationGenerator:
     """
-    Calls AWS Bedrock (Claude 3 Sonnet) to turn MOTIF scores into
-    human-readable explanations. Caches by pattern type to reduce
-    latency (same pattern type → same explanation returned instantly).
+    Calls AWS Bedrock (Converse API) to turn MOTIF scores into human-readable
+    explanations. Falls back gracefully when Bedrock is unconfigured or
+    unavailable — the UI shows "Explanation unavailable" rather than an error.
+    Caches by (pattern_type, salience_bucket) for 6 hours to reduce latency.
     """
 
-    MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+    @property
+    def MODEL_ID(self) -> str:
+        return os.getenv("BEDROCK_MODEL_ID", _DEFAULT_MODEL_ID)
+
     MAX_TOKENS = 150
     TEMPERATURE = 0.3
 
     def __init__(self, region: str = "us-east-1", cache_ttl_hours: int = 6):
-        self.client = boto3.client("bedrock-runtime", region_name=region)
-        self._cache: Dict[str, tuple] = {}  # key → (explanation, expires_at)
+        self._region = region
+        self._client: Optional[object] = None
+        self._cache: Dict[str, tuple] = {}
         self._cache_ttl = timedelta(hours=cache_ttl_hours)
+
+    def _bedrock(self):
+        if self._client is None:
+            self._client = boto3.client(
+                "bedrock-runtime",
+                region_name=os.getenv("AWS_DEFAULT_REGION", self._region),
+            )
+        return self._client
 
     # ------------------------------------------------------------------
     # Public API
@@ -33,11 +55,11 @@ class ExplanationGenerator:
 
         prompt = self._build_prompt(pattern_data)
         explanation = self._call_bedrock(prompt)
-        self._set_cache(cache_key, explanation)
+        if not explanation.startswith("Explanation unavailable"):
+            self._set_cache(cache_key, explanation)
         return explanation
 
     def generate_daily_summary(self, patterns: List[Dict], date: str, location: str) -> str:
-        """Summarise multiple patterns for one day (avoids alert fatigue)."""
         prompt = self._build_batch_prompt(patterns, date, location)
         return self._call_bedrock(prompt)
 
@@ -51,10 +73,10 @@ class ExplanationGenerator:
             confidence = event.get("confidence")
             confidence_text = f" ({confidence * 100:.0f}%)" if confidence is not None else ""
             event_lines.append(
-                f"  {i + 1}. {event['timestamp']}: {event['camera']} - "
-                f"{event['type']}{confidence_text}"
+                f"  {i + 1}. {event.get('timestamp', '')}: {event.get('camera', '')} - "
+                f"{event.get('type', '')}{confidence_text}"
             )
-        events_text = "\n".join(event_lines)
+        events_text = "\n".join(event_lines) or "  (no events)"
 
         salience = p.get("salience_score", 5)
         if salience > 7:
@@ -67,133 +89,94 @@ class ExplanationGenerator:
         confidence = p.get("confidence")
         confidence_text = f"{confidence * 100:.0f}%" if confidence is not None else "Not provided"
 
-        return f"""CONTEXT:
-You are explaining a behavioral pattern detected at a residential smart home to the homeowner.
-The system (VIGILANT) learns what is "normal" for this specific home and detects meaningful deviations.
+        return f"""You are explaining a behavioral pattern detected at a residential smart home to the homeowner. The system learns what is "normal" and surfaces meaningful deviations.
 
-HOME BASELINE:
-- Location: {p.get('location', 'Residential property')}
-- Typical daily patterns: {p.get('baseline_patterns', 'Not yet fully established')}
-- Normal activity hours: {p.get('normal_hours', '7 AM - 11 PM')}
-- Known residents: {p.get('resident_count', 'Unknown')}
+Pattern type: {p.get('pattern_type', 'unknown')}
+Detection confidence: {confidence_text}
+Novelty score: {p.get('novelty_score', 5):.1f}/10
+Salience score: {salience:.1f}/10
 
-DETECTED PATTERN:
-- Pattern Type: {p.get('pattern_type', 'unknown')}
-- Detection Confidence: {confidence_text}
-- Novelty Score: {p.get('novelty_score', 5):.1f}/10 (how unusual is this?)
-- Salience Score: {salience:.1f}/10 (how important is this?)
-
-EVENT SEQUENCE:
+Event sequence:
 {events_text}
 
-PATTERN HISTORY:
-- How often seen before: {p.get('frequency', 'First time')}
-- Last similar pattern: {p.get('last_occurrence', 'Never')}
-
-YOUR TASK:
-1. Explain WHY this pattern is unusual (reference the baseline)
-2. Be concise — 1-2 sentences max
-3. Focus on the sequence, not individual events
-4. Include ONE actionable insight if salience > 6
-5. Use natural, conversational language
-
-TONE: {tone}
-
-Provide the explanation now:"""
+Instructions: Explain in 1–2 sentences why this pattern is unusual (reference the baseline). If salience > 6, include one actionable insight. Use natural, conversational language. Tone: {tone}"""
 
     def _build_batch_prompt(self, patterns: List[Dict], date: str, location: str) -> str:
         pattern_blocks = ""
-        for i, p in enumerate(patterns[:5], 1):  # cap at 5
-            pattern_blocks += f"""
-Pattern #{i}: {p.get('pattern_type', 'unknown')}
-- Time: {p.get('time', 'unknown')}
-- Salience: {p.get('salience_score', 0):.1f}/10
-- Summary: {p.get('summary', '')}
-"""
-
-        return f"""CONTEXT:
-You're summarising multiple behavioral patterns detected in one day at a home.
-Avoid alert fatigue — only call out the most significant patterns.
-
-HOME: {location}
-DATE: {date}
-
-PATTERNS DETECTED:
-{pattern_blocks}
-
-YOUR TASK:
-1. Rank patterns by importance (ignore salience < 4)
-2. Provide 1 sentence per significant pattern
-3. Group related patterns if any
-4. Suggest if homeowner should investigate
-5. Total explanation: max 4 sentences
-
-Now provide the summary:"""
+        for i, p in enumerate(patterns[:5], 1):
+            pattern_blocks += (
+                f"\nPattern #{i}: {p.get('pattern_type', 'unknown')}\n"
+                f"- Time: {p.get('time', 'unknown')}\n"
+                f"- Salience: {p.get('salience_score', 0):.1f}/10\n"
+                f"- Summary: {p.get('summary', '')}\n"
+            )
+        return (
+            f"Summarise multiple behavioral patterns detected in one day at a home. "
+            f"Avoid alert fatigue — only call out the most significant ones.\n\n"
+            f"Home: {location}\nDate: {date}\n\nPatterns:\n{pattern_blocks}\n\n"
+            f"Instructions: Rank by importance (ignore salience < 4). "
+            f"1 sentence per significant pattern. Max 4 sentences total."
+        )
 
     # ------------------------------------------------------------------
-    # Bedrock call
+    # Bedrock Converse call
     # ------------------------------------------------------------------
 
     def _call_bedrock(self, prompt: str) -> str:
         try:
-            body = json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": self.MAX_TOKENS,
-                "temperature": self.TEMPERATURE,
-            })
-            response = self.client.invoke_model(modelId=self.MODEL_ID, body=body)
-            result = json.loads(response["body"].read())
-            return result["content"][0]["text"].strip()
-        except Exception as e:
-            # graceful degradation — never crash the dashboard
-            return f"Pattern detected (explanation unavailable: {type(e).__name__})"
+            response = self._bedrock().converse(
+                modelId=self.MODEL_ID,
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                inferenceConfig={
+                    "maxTokens": self.MAX_TOKENS,
+                    "temperature": self.TEMPERATURE,
+                },
+            )
+            return response["output"]["message"]["content"][0]["text"].strip()
+        except self._bedrock().exceptions.AccessDeniedException:
+            return "Explanation unavailable — Bedrock model access not enabled for this account."
+        except self._bedrock().exceptions.ValidationException as exc:
+            return f"Explanation unavailable — model ID may be invalid: {exc}"
+        except Exception:
+            return "Explanation unavailable."
 
     # ------------------------------------------------------------------
     # Cache helpers
     # ------------------------------------------------------------------
 
     def _cache_key(self, pattern_data: Dict) -> str:
-        key_parts = f"{pattern_data.get('pattern_type')}:{round(pattern_data.get('salience_score', 0))}"
-        return hashlib.md5(key_parts.encode()).hexdigest()
+        key = f"{pattern_data.get('pattern_type')}:{round(pattern_data.get('salience_score', 0))}"
+        return hashlib.md5(key.encode()).hexdigest()
 
     def _get_cached(self, key: str) -> Optional[str]:
         if key in self._cache:
             explanation, expires_at = self._cache[key]
-            if datetime.utcnow() < expires_at:
+            if datetime.now(timezone.utc) < expires_at:
                 return explanation
             del self._cache[key]
         return None
 
-    def _set_cache(self, key: str, explanation: str):
-        self._cache[key] = (explanation, datetime.utcnow() + self._cache_ttl)
+    def _set_cache(self, key: str, explanation: str) -> None:
+        self._cache[key] = (explanation, datetime.now(timezone.utc) + self._cache_ttl)
 
 
 # ------------------------------------------------------------------
-# Smoke test (no Bedrock creds needed — shows prompt output)
+# Smoke test (no Bedrock creds needed — shows prompt only)
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     gen = ExplanationGenerator()
-
     test_pattern = {
         "pattern_type": "rapid_return",
         "confidence": 0.95,
         "novelty_score": 8.5,
         "salience_score": 7.2,
-        "location": "123 Main Street",
-        "baseline_patterns": "Person typically out 4+ hours, returns between 5-7 PM",
-        "normal_hours": "7 AM - 11 PM",
-        "resident_count": 2,
         "events": [
-            {"timestamp": "2:30 PM", "camera": "front_door", "type": "person_detected", "confidence": 0.95},
-            {"timestamp": "2:31 PM", "camera": "front_door", "type": "motion_detected", "confidence": 0.92},
-            {"timestamp": "2:35 PM", "camera": "side_door", "type": "person_detected", "confidence": 0.89},
+            {"timestamp": "14:30", "camera": "front_door", "type": "person_detected", "confidence": 0.95},
+            {"timestamp": "14:31", "camera": "front_door", "type": "motion_detected", "confidence": 0.92},
+            {"timestamp": "14:35", "camera": "side_door", "type": "person_detected", "confidence": 0.89},
         ],
-        "frequency": "First time this week",
-        "last_occurrence": "Similar pattern 2 weeks ago",
     }
-
-    prompt = gen._build_prompt(test_pattern)
     print("=== BUILT PROMPT ===")
-    print(prompt)
-    print("\n(Skipping actual Bedrock call — add AWS creds to test live)")
+    print(gen._build_prompt(test_pattern))
+    print(f"\nModel ID: {gen.MODEL_ID}")
+    print("(Add AWS credentials to .env to test a live Bedrock call)")

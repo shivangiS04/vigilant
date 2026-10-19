@@ -35,4 +35,11 @@ export const api = {
 
   getBaselineComparison: (homeId = "home_001", days = 7) =>
     get("/baseline-comparison", { home_id: homeId, days }),
+
+  getRingStatus: () => get("/ring/status"),
+
+  getHealth: () => get("/health"),
+
+  submitFeedback: (patternId, feedback, homeId = "home_001") =>
+    post(`/patterns/${patternId}/feedback`, { pattern_id: patternId, feedback, home_id: homeId }),
 };

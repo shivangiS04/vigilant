@@ -1,7 +1,7 @@
 import asyncio
 import random
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Callable, List, Optional
 
 
@@ -96,7 +96,7 @@ class RingAPIClient:
 
     def _simulate_events(self) -> List[RingEvent]:
         """Generate realistic fake Ring events for development."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         hour = now.hour
 
         # probability of events by time of day
@@ -153,7 +153,7 @@ class RingAPIClient:
             camera_id=raw.get("doorbot_id", ""),
             camera_name=raw.get("description", {}).get("device_name", "unknown"),
             type=_map_ring_event_type(raw.get("kind", "")),
-            timestamp=datetime.fromisoformat(raw.get("created_at", datetime.utcnow().isoformat())),
+            timestamp=datetime.fromisoformat(raw.get("created_at", datetime.now(timezone.utc).replace(tzinfo=None).isoformat())),
             confidence=raw.get("confidence", 1.0),
             home_id=home_id,
         )

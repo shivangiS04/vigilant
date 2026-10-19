@@ -2,7 +2,7 @@ import os
 import json
 import time
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs
 
 import httpx
@@ -78,7 +78,7 @@ class RingOAuthTests(unittest.TestCase):
         self.assertNotEqual(account.refresh_token_encrypted, "refresh-secret")
         self.assertEqual(decrypt_token(account.access_token_encrypted), "access-secret")
         self.assertEqual(decrypt_token(account.refresh_token_encrypted), "refresh-secret")
-        self.assertGreater(account.access_token_expires_at, datetime.utcnow())
+        self.assertGreater(account.access_token_expires_at, datetime.now(timezone.utc).replace(tzinfo=None))
         self.assertEqual(account.status, "unclaimed")
 
     def test_webhook_receipt_is_idempotent_by_ring_request_id(self):
@@ -137,7 +137,7 @@ class RingOAuthTests(unittest.TestCase):
                     "account_id": "ring-refresh-account",
                     "access_token_encrypted": encrypt_token("expired-access"),
                     "refresh_token_encrypted": encrypt_token("old-refresh"),
-                    "access_token_expires_at": datetime.utcnow() - timedelta(seconds=1),
+                    "access_token_expires_at": datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1),
                 },
             )
             token = get_access_token(db, account, client)
@@ -176,7 +176,7 @@ class RingOAuthTests(unittest.TestCase):
                     "account_id": "ring-account-claim",
                     "access_token_encrypted": encrypt_token("access-token"),
                     "refresh_token_encrypted": encrypt_token("refresh-token"),
-                    "access_token_expires_at": datetime.utcnow() + timedelta(hours=1),
+                    "access_token_expires_at": datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1),
                 },
             )
             db.commit()

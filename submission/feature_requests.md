@@ -1,0 +1,129 @@
+# VIGILANT — Feature Requests for Ring and AWS
+**Submitted by:** Shivangi Singh, Archisha Srivastava
+**Hackathon:** Amazon Developer Hackathon 2026 — Ring Track
+**Date:** October 2026
+
+---
+
+## Ring Partner API — Feature Requests
+
+### FR-R1: Webhook simulator CLI tool
+**Urgency: Critical**
+
+Ship a `ring webhook forward` command (or equivalent) that:
+- Listens for events from a staging account
+- Forwards them as properly signed webhooks to a local URL
+
+Or at minimum: provide a curl command in the docs that sends a valid, HMAC-signed v1.1 test payload to any URL, with the signing logic shown explicitly.
+
+**Why:** Every Ring Partner developer needs to test their webhook handler before going to production. Without a simulator, developers have to either deploy to a public URL first (which slows the dev loop by 10–30 minutes per test cycle) or build their own simulator (which takes days). Stripe, GitHub, Shopify, and Twilio all ship this as a first-class developer tool. It is the single most important developer-experience improvement Ring could make for the Partner API.
+
+**Impact:** Reduces time-to-first-signed-webhook from hours/days to minutes.
+
+---
+
+### FR-R2: Complete payload schema documentation for all event types
+**Urgency: High**
+
+Publish a complete JSON schema (or at minimum a table) for every webhook event type:
+- `motion_detected`
+- `button_press` / `ding`
+- `app_integration_removed`
+- `app_integration_added`
+- Any other types that may exist
+
+For each: list all fields, their types, which are required vs. optional, and the full enumeration of sub_type values.
+
+**Why:** Developers implementing normalization and routing logic need to know the exact shape of every payload. Undocumented types and undocumented fields cause real bugs — we had a test failure traced to `app_integration_removed` having empty attributes, which was not in the docs.
+
+---
+
+### FR-R3: Clarify HMAC Signature Key lifecycle and rotation policy
+**Urgency: High**
+
+In the Portal and in the docs, explicitly state:
+1. The HMAC Signature Key is a stable deployment secret (not per-session or per-flow)
+2. Whether it ever rotates, and if so, how (manual, automatic, on what events)
+3. What happens to signed payloads after rotation (grace period?)
+
+**Why:** "One-time" is ambiguous. Developers who misread it as "rotates each flow" will implement incorrect signature verification. Developers who use it for both nonce signing and webhook signing may be confused about scope.
+
+---
+
+### FR-R4: Staging webhook delivery confirmation
+**Urgency: Medium**
+
+On the Developer Portal Test page, show:
+- Whether the webhook URL was called
+- The HTTP status code returned
+- The response body (truncated)
+- The timestamp of delivery
+
+**Why:** There is currently no way to know if a webhook was delivered during a test flow. A developer cannot distinguish "webhooks not delivered" from "my handler is down" without external logging. Even a simple "last delivery: 2 minutes ago — HTTP 200" in the Portal would save hours of debugging.
+
+---
+
+### FR-R5: Partner API rate limits in documentation
+**Urgency: Medium**
+
+Publish the rate limits for the Partner API:
+- Webhook delivery: max events per second per account, per app
+- Account API: max requests per minute per token
+- Token exchange: max requests per hour
+
+**Why:** We don't know if our MOTIF processing pipeline (which may take 200–500ms) could back up under load. We can't design appropriate rate-limit handling without knowing the limits.
+
+---
+
+### FR-R6: Webhook delivery retry policy in documentation
+**Urgency: Low**
+
+Document:
+- How many times Ring retries a webhook on failure (non-200 response)
+- The retry interval (immediate? exponential backoff?)
+- Whether Ring drops events after N retries
+
+**Why:** We implemented deduplication by `meta.request_id` because Ring may retry. But we don't know the retry behavior in detail, which makes it hard to reason about our event-loss risk in edge cases.
+
+---
+
+## AWS Bedrock — Feature Requests
+
+### FR-B1: Model migration guide when model IDs change format
+**Urgency: High**
+
+When a model is deprecated or the ID format changes:
+1. Show a deprecation warning in the Bedrock console when the old ID is used
+2. Include a migration path in the deprecation notice
+3. Add a "Deprecated model IDs" table to the docs mapping old → new IDs
+
+**Why:** Legacy model IDs return HTTP 400 with a generic error. There is no discoverable path from the old ID to the new cross-region inference profile format.
+
+---
+
+### FR-B2: Clearer error messages for model access vs. credential issues
+**Urgency: Medium**
+
+When a `bedrock:InvokeModel` call fails with `AccessDeniedException`, the error message should distinguish:
+1. IAM policy does not allow this model
+2. Model access is not enabled in this region/account
+3. Model access request is pending approval
+
+**Why:** The current error messages for these three cases are similar enough that developers cannot determine the fix without trying all three in sequence. Clear, differentiated messages reduce debug time from 30–60 minutes to 5 minutes.
+
+---
+
+### FR-B3: Bedrock Converse API response structure in docs
+**Urgency: Low**
+
+In the Converse API reference, show the full response structure for the non-streaming response with a code example extracting the text:
+
+```python
+text = response["output"]["message"]["content"][0]["text"]
+```
+
+**Why:** This is not in the official docs. Developers find it through community examples or SDK source. It is a single line that would eliminate 30 minutes of guessing for every first-time Converse API user.
+
+---
+
+*Submitted as part of the Amazon Developer Hackathon 2026 Ring track.*
