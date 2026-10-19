@@ -41,13 +41,13 @@
 
 | Test file | Tests | What it covers |
 |---|---|---|
-| `test_api.py` | 21 | Health, demo seed, patterns, Ring status, feedback, official mode guard |
-| `test_webhook_pipeline.py` | 22 | HMAC verification, normalization, simulator builder, integration tests |
+| `test_api.py` | 16 | Health, demo seed, patterns, Ring status, /ring/link render, official mode guard |
+| `test_webhook_pipeline.py` | 17 | HMAC verification, normalization, simulator builder, integration tests |
 | `test_motif.py` | 20 | All four MOTIF scoring layers, all pattern types, timezone edge cases, loitering vs. caretaking disambiguation |
-| `test_ring_oauth.py` | 6 | Token encryption/refresh, account linking, nonce expiry |
-| `test_ring_security.py` | 6 | Signature verification edge cases |
+| `test_ring_oauth.py` | 10 | Token encryption/refresh, account linking, nonce expiry |
+| `test_ring_security.py` | 4 | Signature verification edge cases |
 | `test_database_migration.py` | 1 | SQLite nullable-confidence migration integrity |
-| `test_explanation.py` | 15 | Rule-based explainer: all pattern templates, score signals, daily digest, span helpers |
+| `test_explanation.py` | 16 | Rule-based explainer: all pattern templates, score signals, daily digest, span helpers |
 
 Remaining warnings are SQLAlchemy internals (library's own `datetime.utcnow()`) — not our code.
 
