@@ -3,6 +3,7 @@ import { EventTimeline } from "./components/EventTimeline";
 import { PatternList } from "./components/PatternCard";
 import { PatternDetail } from "./components/PatternDetail";
 import { BaselineComparison } from "./components/BaselineComparison";
+import { DailySummary } from "./components/DailySummary";
 import { RingStatus } from "./components/RingStatus";
 import { usePatterns, useEvents } from "./hooks/useEvents";
 
@@ -153,7 +154,12 @@ export default function App() {
                 />
               </>
             )}
-            {tab === "analytics" && <BaselineComparison homeId={HOME_ID} />}
+            {tab === "analytics" && (
+              <>
+                <DailySummary homeId={HOME_ID} />
+                <BaselineComparison homeId={HOME_ID} />
+              </>
+            )}
             {tab === "events" && <EventTimeline homeId={HOME_ID} />}
           </main>
         </>

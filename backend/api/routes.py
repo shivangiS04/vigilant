@@ -24,6 +24,7 @@ from backend.motif_engine.motif_core import MotifEngine, RingEvent as MotifRingE
 from backend.bedrock_integration.explanation_generator import ExplanationGenerator
 from backend.database.session import get_db, init_db
 from backend.database import repository as repo
+from backend.database.models import Pattern as PatternModel, RingEvent as RingEventModel
 from backend.alexa_integration.client import AlexaClient
 from backend.ring_integration.normalization import normalize_webhook_event
 from backend.ring_integration.oauth import (
@@ -698,6 +699,43 @@ def get_baseline_comparison(
         return repo.get_baseline_comparison(db, home_id, days)
 
 
+@app.get("/daily-summary")
+def get_daily_summary(home_id: str = Query("home_001")):
+    """One-day digest: event counts, flagged patterns, noise reduction, top alert."""
+    with get_db() as db:
+        events = repo.get_events(db, home_id, hours=24, limit=500)
+        patterns = repo.get_patterns(db, home_id, days=1)
+
+    total_events = len(events)
+    flagged = [p for p in patterns if p.flagged]
+
+    breakdown: dict = {}
+    for p in patterns:
+        breakdown[p.pattern_type] = breakdown.get(p.pattern_type, 0) + 1
+
+    top = max(patterns, key=lambda p: p.salience_score, default=None)
+    avg_sal = round(sum(p.salience_score for p in patterns) / len(patterns), 1) if patterns else 0.0
+    noise_pct = round(((total_events - len(flagged)) / total_events) * 100) if total_events > 0 else None
+
+    return {
+        "home_id": home_id,
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "period_hours": 24,
+        "total_events": total_events,
+        "total_patterns": len(patterns),
+        "flagged_count": len(flagged),
+        "noise_reduction_pct": noise_pct,
+        "avg_salience": avg_sal,
+        "pattern_breakdown": breakdown,
+        "top_pattern": {
+            "id": top.id,
+            "type": top.pattern_type,
+            "salience": top.salience_score,
+            "explanation": top.explanation,
+        } if top else None,
+    }
+
+
 @app.get("/baseline")
 def get_baseline(home_id: str = Query("home_001")):
     with get_db() as db:
@@ -717,10 +755,22 @@ def get_baseline(home_id: str = Query("home_001")):
         }
 
 
+def _require_demo_token(token: Optional[str]) -> None:
+    """Allow demo endpoints in simulator mode, or in official mode when DEMO_SEED_TOKEN matches.
+    Returns 404 in all failure cases — don't reveal the endpoint exists to scanners."""
+    if os.getenv("RING_INTEGRATION_MODE", "official").lower() == "simulator":
+        return
+    expected = os.getenv("DEMO_SEED_TOKEN", "")
+    if not expected or not secrets.compare_digest(token or "", expected):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
 @app.post("/demo/seed")
-def seed_demo_data(home_id: str = Query("home_001")):
-    if os.getenv("RING_INTEGRATION_MODE", "official").lower() != "simulator":
-        raise HTTPException(status_code=404, detail="Demo seeding is disabled outside simulator mode")
+def seed_demo_data(
+    home_id: str = Query("home_001"),
+    token: Optional[str] = Query(None),
+):
+    _require_demo_token(token)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     h = home_id  # short alias for id prefixing
@@ -735,13 +785,17 @@ def seed_demo_data(home_id: str = Query("home_001")):
         {"id": f"{h}_e8",  "camera_id": "side_door",   "type": "person_detected",  "confidence": 0.86, "timestamp": (now - timedelta(minutes=8)).isoformat(),           "home_id": home_id},
         {"id": f"{h}_e9",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.82, "timestamp": (now - timedelta(minutes=5)).isoformat(),           "home_id": home_id},
         {"id": f"{h}_e10", "camera_id": "driveway",    "type": "vehicle_detected", "confidence": 0.85, "timestamp": (now - timedelta(minutes=2)).isoformat(),           "home_id": home_id},
+        # caretaking / late_first_activity seed: motion at front_door around 14:30 local, first activity of day
+        {"id": f"{h}_e11", "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.80, "timestamp": (now - timedelta(hours=5, minutes=30)).isoformat(), "home_id": home_id},
+        {"id": f"{h}_e12", "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.77, "timestamp": (now - timedelta(hours=5, minutes=25)).isoformat(), "home_id": home_id},
     ]
 
     demo_patterns = [
-        {"id": f"{h}_p1", "home_id": home_id, "pattern_type": "rapid_return",      "fingerprint": "fp1", "salience_score": 8.2, "novelty_score": 9.0, "adaptation_score": 10.0, "temporal_weight": 0.8, "competition_score": 10.0, "flagged": True,  "explanation": "[Sample] Someone returned home just 8 minutes after leaving — far shorter than the usual 4+ hours — and entered through the side door instead of the front. Worth a quick check.", "detected_at": (now - timedelta(hours=2)).isoformat(), "event_ids": [f"{h}_e1", f"{h}_e2", f"{h}_e4"]},
-        {"id": f"{h}_p2", "home_id": home_id, "pattern_type": "delivery",          "fingerprint": "fp2", "salience_score": 5.1, "novelty_score": 5.0, "adaptation_score": 5.0,  "temporal_weight": 0.8, "competition_score": 7.0,  "flagged": False, "explanation": "[Sample] A vehicle pulled up and a person approached the front door — likely a package delivery around the usual midday window.", "detected_at": (now - timedelta(hours=1, minutes=40)).isoformat(), "event_ids": [f"{h}_e3", f"{h}_e5", f"{h}_e6"]},
-        {"id": f"{h}_p3", "home_id": home_id, "pattern_type": "unusual_entrance",  "fingerprint": "fp3", "salience_score": 7.5, "novelty_score": 8.0, "adaptation_score": 9.0,  "temporal_weight": 1.0, "competition_score": 5.0,  "flagged": True,  "explanation": "[Sample] Activity detected at the side door during an unusual time — this entrance is rarely used and wasn't part of any expected pattern today.", "detected_at": (now - timedelta(minutes=10)).isoformat(), "event_ids": [f"{h}_e8"]},
-        {"id": f"{h}_p4", "home_id": home_id, "pattern_type": "standard_activity", "fingerprint": "fp4", "salience_score": 2.8, "novelty_score": 2.0, "adaptation_score": 3.0,  "temporal_weight": 0.8, "competition_score": 3.0,  "flagged": False, "explanation": "[Sample] Backyard motion — consistent with wind or an animal. No person detected.", "detected_at": (now - timedelta(minutes=22)).isoformat(), "event_ids": [f"{h}_e7"]},
+        {"id": f"{h}_p1", "home_id": home_id, "pattern_type": "rapid_return",       "fingerprint": "fp1", "salience_score": 8.2, "novelty_score": 9.0, "adaptation_score": 10.0, "temporal_weight": 0.8, "competition_score": 10.0, "flagged": True,  "explanation": "[Sample] Someone returned home just 8 minutes after leaving — far shorter than the usual 4+ hours — and entered through the side door instead of the front. Worth a quick check.", "detected_at": (now - timedelta(hours=2)).isoformat(), "event_ids": [f"{h}_e1", f"{h}_e2", f"{h}_e4"]},
+        {"id": f"{h}_p2", "home_id": home_id, "pattern_type": "delivery",           "fingerprint": "fp2", "salience_score": 5.1, "novelty_score": 5.0, "adaptation_score": 5.0,  "temporal_weight": 0.8, "competition_score": 7.0,  "flagged": False, "explanation": "[Sample] A vehicle pulled up and a person approached the front door — likely a package delivery around the usual midday window.", "detected_at": (now - timedelta(hours=1, minutes=40)).isoformat(), "event_ids": [f"{h}_e3", f"{h}_e5", f"{h}_e6"]},
+        {"id": f"{h}_p3", "home_id": home_id, "pattern_type": "unusual_entrance",   "fingerprint": "fp3", "salience_score": 7.5, "novelty_score": 8.0, "adaptation_score": 9.0,  "temporal_weight": 1.0, "competition_score": 5.0,  "flagged": True,  "explanation": "[Sample] Activity detected at the side door during an unusual time — this entrance is rarely used and wasn't part of any expected pattern today.", "detected_at": (now - timedelta(minutes=10)).isoformat(), "event_ids": [f"{h}_e8"]},
+        {"id": f"{h}_p4", "home_id": home_id, "pattern_type": "standard_activity",  "fingerprint": "fp4", "salience_score": 2.8, "novelty_score": 2.0, "adaptation_score": 3.0,  "temporal_weight": 0.8, "competition_score": 3.0,  "flagged": False, "explanation": "[Sample] Backyard motion — consistent with wind or an animal. No person detected.", "detected_at": (now - timedelta(minutes=22)).isoformat(), "event_ids": [f"{h}_e7"]},
+        {"id": f"{h}_p5", "home_id": home_id, "pattern_type": "late_first_activity", "fingerprint": "fp5", "salience_score": 6.8, "novelty_score": 7.0, "adaptation_score": 8.0,  "temporal_weight": 0.5, "competition_score": 5.0,  "flagged": True,  "explanation": "[Sample] First activity of the day didn't appear until mid-afternoon — earlier days show movement by 9 AM. Could indicate a wellness concern worth checking on.", "detected_at": (now - timedelta(hours=5, minutes=28)).isoformat(), "event_ids": [f"{h}_e11", f"{h}_e12"]},
     ]
 
     seeded_p = 0
@@ -754,6 +808,28 @@ def seed_demo_data(home_id: str = Query("home_001")):
                 seeded_p += 1
 
     return {"seeded_events": len(demo_events), "seeded_patterns": seeded_p}
+
+
+@app.post("/demo/clear")
+def clear_demo_data(
+    home_id: str = Query("home_001"),
+    token: Optional[str] = Query(None),
+):
+    """Remove only the seeded demo records for this home (IDs prefixed with home_id)."""
+    _require_demo_token(token)
+    prefix = f"{home_id}_%"
+    with get_db() as db:
+        deleted_p = (
+            db.query(PatternModel)
+            .filter(PatternModel.home_id == home_id, PatternModel.id.like(prefix))
+            .delete(synchronize_session=False)
+        )
+        deleted_e = (
+            db.query(RingEventModel)
+            .filter(RingEventModel.home_id == home_id, RingEventModel.id.like(prefix))
+            .delete(synchronize_session=False)
+        )
+    return {"deleted_patterns": deleted_p, "deleted_events": deleted_e}
 
 
 class FeedbackRequest(BaseModel):
