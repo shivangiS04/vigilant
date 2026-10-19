@@ -22,10 +22,7 @@ export function PatternDetail({ pattern, onBack }) {
     { label: "Adaptation",  value: pattern.adaptation_score, desc: "How many times seen before" },
   ].filter((l) => l.value != null);
 
-  const isSample = pattern.explanation?.startsWith("[Sample]");
-  const explanationText = isSample
-    ? pattern.explanation.replace(/^\[Sample\]\s*/, "")
-    : pattern.explanation;
+  const explanationText = pattern.explanation;
 
   async function handleFeedback(choice) {
     if (submitting || feedback) return;
@@ -62,21 +59,14 @@ export function PatternDetail({ pattern, onBack }) {
 
         {pattern.explanation ? (
           <div style={styles.explanationBox}>
-            <div style={styles.explanationLabel}>
-              {isSample ? "SAMPLE EXPLANATION" : "AI EXPLANATION (AWS Bedrock)"}
-            </div>
+            <div style={styles.explanationLabel}>EXPLANATION</div>
             <p style={styles.explanation}>{explanationText}</p>
-            {isSample && (
-              <div style={styles.sampleNote}>
-                ⚠ This is demo data. Live patterns generate real Bedrock explanations.
-              </div>
-            )}
           </div>
         ) : (
           <div style={styles.explanationBox}>
-            <div style={styles.explanationLabel}>AI EXPLANATION</div>
+            <div style={styles.explanationLabel}>EXPLANATION</div>
             <p style={{ ...styles.explanation, color: "#a0aec0", fontStyle: "normal" }}>
-              Explanation unavailable — AWS Bedrock credentials not configured.
+              No explanation available for this pattern.
             </p>
           </div>
         )}

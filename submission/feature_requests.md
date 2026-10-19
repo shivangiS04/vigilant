@@ -1,4 +1,4 @@
-# VIGILANT — Feature Requests for Ring and AWS
+# VIGILANT — Feature Requests for Ring
 **Submitted by:** Shivangi Singh, Archisha Srivastava
 **Hackathon:** Amazon Developer Hackathon 2026 — Ring Track
 **Date:** October 2026
@@ -84,45 +84,6 @@ Document:
 - Whether Ring drops events after N retries
 
 **Why:** We implemented deduplication by `meta.request_id` because Ring may retry. But we don't know the retry behavior in detail, which makes it hard to reason about our event-loss risk in edge cases.
-
----
-
-## AWS Bedrock — Feature Requests
-
-### FR-B1: Model migration guide when model IDs change format
-**Urgency: High**
-
-When a model is deprecated or the ID format changes:
-1. Show a deprecation warning in the Bedrock console when the old ID is used
-2. Include a migration path in the deprecation notice
-3. Add a "Deprecated model IDs" table to the docs mapping old → new IDs
-
-**Why:** Legacy model IDs return HTTP 400 with a generic error. There is no discoverable path from the old ID to the new cross-region inference profile format.
-
----
-
-### FR-B2: Clearer error messages for model access vs. credential issues
-**Urgency: Medium**
-
-When a `bedrock:InvokeModel` call fails with `AccessDeniedException`, the error message should distinguish:
-1. IAM policy does not allow this model
-2. Model access is not enabled in this region/account
-3. Model access request is pending approval
-
-**Why:** The current error messages for these three cases are similar enough that developers cannot determine the fix without trying all three in sequence. Clear, differentiated messages reduce debug time from 30–60 minutes to 5 minutes.
-
----
-
-### FR-B3: Bedrock Converse API response structure in docs
-**Urgency: Low**
-
-In the Converse API reference, show the full response structure for the non-streaming response with a code example extracting the text:
-
-```python
-text = response["output"]["message"]["content"][0]["text"]
-```
-
-**Why:** This is not in the official docs. Developers find it through community examples or SDK source. It is a single line that would eliminate 30 minutes of guessing for every first-time Converse API user.
 
 ---
 

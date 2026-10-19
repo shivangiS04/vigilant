@@ -1,6 +1,6 @@
 # VIGILANT — Behavioral Intelligence for Connected Homes
 
-**Track:** Ring (Primary) · AWS Builder Mini Challenge (Secondary)
+**Track:** Ring (Primary)
 **Team:** Shivangi Singh, Archisha Srivastava
 **Built:** September 26 – October 24, 2026
 
@@ -18,14 +18,14 @@ Individual-event alerts are the wrong unit of analysis. A motion alert means not
 
 VIGILANT watches Ring events in sequences, not individually. It learns what "normal" looks like at a specific home over time and surfaces only the patterns that meaningfully deviate from that baseline.
 
-The result: **90%+ of Ring events are silently classified as normal.** The homeowner sees only the handful of sequences that actually warrant attention, with a plain-language explanation of why — generated live by AWS Bedrock.
+The result: **90%+ of Ring events are silently classified as normal.** The homeowner sees only the handful of sequences that actually warrant attention, with a plain-language explanation of why — generated deterministically from the actual MOTIF score data.
 
 ---
 
 ## How It Works
 
 ```
-Ring webhooks → MOTIF Engine → Salience Score → Bedrock Explanation → Dashboard
+Ring webhooks → MOTIF Engine → Salience Score → Rule-Based Explanation → Dashboard
 ```
 
 ### The MOTIF Engine
@@ -49,10 +49,9 @@ VIGILANT uses the Ring Partner API for the full production integration:
 - **Webhook deduplication** — Ring may retry deliveries. We deduplicate by Ring's `meta.request_id`.
 - **Account link nonce** — We validate Ring's time-bound (10-minute) HMAC nonce before completing the account link.
 
-### AWS Services
+### Explainable by Design
 
-- **AWS Bedrock (Claude 3.5 Haiku)** — Generates a 1–2 sentence plain-language explanation for every flagged pattern. Tone adjusts by salience: alert (> 7), informative (4–7), or low-key FYI (< 4). Cached by pattern type for 6 hours to reduce latency and cost.
-- **AWS IAM** — Least-privilege policy: `bedrock:InvokeModel` on the Haiku model only.
+Explanations are generated deterministically by `backend/explanation/explainer.py` — a rule-based engine that produces a 1–2 sentence explanation from the actual MOTIF score data: the pattern type, the camera names and local timestamps, and the novelty/adaptation scores vs. the learned baseline. No API keys, no network calls, no external dependencies.
 
 ---
 
@@ -72,9 +71,9 @@ VIGILANT uses the Ring Partner API for the full production integration:
 - **MOTIF engine** — Four-layer salience scoring with Jaccard fuzzy novelty and auto-learning baseline.
 - **HMAC-signed simulator** — Exercises the real Ring code path locally: builds v1.1 payloads, signs them, and POSTs to `/ring/webhook`. No bypassing of any real code.
 - **React dashboard** — Live noise-reduction stats (X events → Y patterns → Z flagged), Ring connection status panel, 7-day baseline comparison chart, pattern score breakdown, and a feedback loop ("This was normal") that teaches the system.
-- **AWS Bedrock explanations** — Real Bedrock calls on flagged patterns.
+- **Rule-based explanation engine** — deterministic explanations from real MOTIF score data; no LLM, no API keys, always available.
 - **Daily digest** — `GET /daily-summary` surfaces a 24h digest card in the Analytics tab: total events, patterns, flagged count, noise reduction %, avg salience, and the top alert explanation.
-- **Full test suite** — 68 tests including HMAC verification, webhook normalization against official payload shapes, deduplication, timezone edge cases, and end-to-end webhook → pipeline tests.
+- **Full test suite** — 80 tests including HMAC verification, webhook normalization against official payload shapes, deduplication, timezone edge cases, and end-to-end webhook → pipeline tests.
 - **CI pipeline** — GitHub Actions, runs on every push.
 
 ---
