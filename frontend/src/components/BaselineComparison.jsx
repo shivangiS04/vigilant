@@ -156,7 +156,7 @@ export function BaselineComparison({ homeId = "home_001" }) {
 }
 
 const s = {
-  card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "20px 16px 16px", marginBottom: 16 },
+  card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "20px 16px 16px", marginBottom: 16, overflowX: "hidden" },
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
   title: { margin: 0, fontSize: 16, fontWeight: 700, color: "#1a202c" },
   badge: { fontSize: 12, background: "#fff5f5", color: "#c53030", border: "1px solid #feb2b2", borderRadius: 12, padding: "2px 10px" },

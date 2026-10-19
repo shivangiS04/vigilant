@@ -1,7 +1,10 @@
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+logger = logging.getLogger("vigilant.ring.client")
 
 
 RING_OAUTH_BASE_URL = "https://oauth.ring.com"
@@ -121,4 +124,13 @@ class RingPartnerClient:
     @staticmethod
     def _raise_for_ring(response: httpx.Response, message: str) -> None:
         if response.is_error:
-            raise RingPartnerAPIError(f"{message} (HTTP {response.status_code})")
+            # Include truncated response body to help diagnose Ring API errors.
+            # Avoid logging the full body in case it contains sensitive fields.
+            try:
+                body_snippet = response.text[:200]
+            except Exception:
+                body_snippet = "<unreadable>"
+            logger.error("%s HTTP %s — body: %s", message, response.status_code, body_snippet)
+            raise RingPartnerAPIError(
+                f"{message} (HTTP {response.status_code})"
+            )

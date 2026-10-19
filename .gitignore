@@ -12,6 +12,7 @@ build/
 # Environment
 .env
 *.env.local
+frontend/.env.production
 
 # Node
 frontend/node_modules/

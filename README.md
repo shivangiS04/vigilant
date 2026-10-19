@@ -1,7 +1,7 @@
 # VIGILANT
 ### Behavioral Intelligence for Connected Homes
 
-> A Ring-powered smart home security system that learns what "normal" looks like at your home and surfaces only the patterns that actually matter — powered by a drosophila-inspired attention model and AWS Bedrock.
+> A Ring-powered smart home security system that learns what "normal" looks like at your home and surfaces only the patterns that actually matter — powered by a drosophila-inspired attention model, explainable by design.
 
 ---
 
@@ -41,19 +41,19 @@ Most Ring setups send 50+ daily alerts. People stop reading them. Real threats g
 
 VIGILANT fixes this by watching *sequences* of events instead of individual triggers. It learns your home's normal behavior over time (person leaves at 8 AM, returns at 5:30 PM, always through the front door) and only alerts you when something meaningfully deviates from that baseline.
 
-The core idea comes from neuroscience: Barlow (1961) proposed that sensory neurons are efficient encoders — they respond strongly to novel stimuli and suppress responses to repeated, predictable ones. The fruit fly olfactory system is a well-studied example of this: the fly's mushroom body rapidly habituates to familiar odors and snaps to attention when a genuinely new smell appears, even after hours of the familiar one. We implemented that same four-layer attention model (called **MOTIF**) on top of Ring event data — the system habituates to your home's normal rhythms and fires only when something deviates in a way that would have mattered in a real nervous system. AWS Bedrock then turns that score into a plain-language explanation.
+The core idea comes from neuroscience: Barlow (1961) proposed that sensory neurons are efficient encoders — they respond strongly to novel stimuli and suppress responses to repeated, predictable ones. The fruit fly olfactory system is a well-studied example of this: the fly's mushroom body rapidly habituates to familiar odors and snaps to attention when a genuinely new smell appears, even after hours of the familiar one. We implemented that same four-layer attention model (called **MOTIF**) on top of Ring event data — the system habituates to your home's normal rhythms and fires only when something deviates in a way that would have mattered in a real nervous system. A rule-based explainer then turns that score into a plain-language explanation derived from the actual scoring data.
 
 ---
 
 ## How It Works — End to End
 
 ```
-Ring Events → MOTIF Engine → Salience Score → Bedrock Explanation → Dashboard
+Ring Events → MOTIF Engine → Salience Score → Rule-Based Explanation → Dashboard
 ```
 
 1. **Ring Integration** delivers events (person, motion, vehicle, doorbell) via signed webhooks across all cameras.
 2. **MOTIF Engine** groups events into sequences and scores each on four axes.
-3. If salience > 6.0, the pattern is **flagged** and sent to **AWS Bedrock** (Claude 3.5 Haiku) for a natural-language explanation.
+3. If salience > 6.0, the pattern is **flagged** and the rule-based explainer generates a natural-language explanation from the actual score data.
 4. Low-salience patterns (< 4.0) are **auto-learned** as "normal" and written to the baseline DB.
 5. The **React dashboard** shows flagged patterns with explanations, score breakdowns, and the raw event timeline.
 
@@ -118,19 +118,19 @@ vigilant/
 ├── backend/
 │   ├── motif_engine/
 │   │   └── motif_core.py           ← The brain. All four scoring layers + Jaccard novelty.
-│   ├── bedrock_integration/
-│   │   └── explanation_generator.py ← Builds prompts + calls AWS Bedrock.
-│   │                                  6h cache by pattern type to cut latency.
+│   ├── explanation/
+│   │   └── explainer.py            ← Rule-based explainer. Templates per pattern
+│   │                                  type, driven by real MOTIF score data.
 │   ├── ring_integration/
 │   │   ├── api_client.py           ← Development simulator, only when explicitly selected.
 │   │   ├── official_client.py      ← Official Ring Partner API HTTP/OAuth client.
 │   │   ├── oauth.py                ← Encrypted tokens and one-way account linking.
 │   │   ├── normalization.py        ← Ring webhook/history to Vigilant event mapping.
 │   │   ├── security.py             ← Ring HMAC nonce and webhook signature checks.
-│   │   └── pipeline.py             ← Shared event-to-MOTIF/Bedrock/Alexa pipeline.
+│   │   └── pipeline.py             ← Shared event-to-MOTIF/explainer/Alexa pipeline.
 │   ├── alexa_integration/
 │   │   ├── client.py               ← AlexaClient: invokes Lambda on flagged patterns.
-│   │   └── lambda_handler.py       ← Deploy to AWS Lambda (vigilant-alexa-announcer).
+│   │   └── lambda_handler.py       ← Deploy as a Lambda (vigilant-alexa-announcer).
 │   ├── database/
 │   │   ├── models.py               ← SQLAlchemy ORM: homes, cameras, events,
 │   │   │                              patterns, baselines (SQLite + Postgres compatible)
@@ -159,7 +159,6 @@ vigilant/
 │   └── vite.config.js
 │
 ├── prompts/
-│   ├── VIGILANT_Exact_Prompts.md   ← All Bedrock prompt templates with code.
 │   └── VIGILANT_Prompts_QuickRef.md ← Quick reference by task / day.
 │
 ├── vercel.json                     ← Vercel build + routing config.
@@ -176,7 +175,6 @@ vigilant/
 
 - Python 3.11+
 - Node.js 18+
-- AWS account with Bedrock access (for live explanations — not required for dev)
 
 ### 1. Clone & configure
 
@@ -184,7 +182,6 @@ vigilant/
 git clone https://github.com/shivangiS04/vigilant.git
 cd vigilant
 cp .env.example .env
-# optionally add AWS creds — backend works without them
 ```
 
 ### 2. Backend
@@ -374,10 +371,10 @@ Use the output as `VIGILANT_ACCOUNT_PASSWORD_HASH`. This is not a Ring password.
 
 - `RING_INTEGRATION_MODE=official` is the default. It never generates fake Ring events and waits for signed Ring webhooks.
 - `RING_INTEGRATION_MODE=simulator` explicitly enables the local development generator and `/demo/seed`.
-- Ring sends real-time motion and button-press notifications to `/ring/webhook`. Verified events are persisted and normalized, then passed through MOTIF; flagged patterns still use Bedrock and Alexa.
+- Ring sends real-time motion and button-press notifications to `/ring/webhook`. Verified events are persisted and normalized, then passed through MOTIF; flagged patterns get a rule-based explanation and trigger Alexa if enabled.
 - Ring does not provide an event confidence value in these webhook payloads, so Vigilant stores and displays confidence as unavailable.
 - Deploy this FastAPI backend before entering its HTTPS URLs in the Portal. Configure a durable PostgreSQL database before enabling real Ring accounts; Vercel's `/tmp` SQLite filesystem is ephemeral and unsuitable for Ring tokens or webhook deduplication.
-- Webhook acknowledgement is separated from MOTIF/Bedrock processing. For production reliability across process restarts, deploy a durable background queue/worker; Ring may retry deliveries, and Vigilant deduplicates them by Ring's `meta.request_id`.
+- Webhook acknowledgement is separated from MOTIF/explanation processing. For production reliability across process restarts, deploy a durable background queue/worker; Ring may retry deliveries, and Vigilant deduplicates them by Ring's `meta.request_id`.
 
 Official endpoint, token, nonce, event and signature behavior is documented at [Ring API Documentation](https://developer.amazon.com/docs/ring/api-documentation.html), [Configure](https://developer.amazon.com/docs/ring/configure.html), and [Getting Started](https://developer.amazon.com/docs/ring/get-started.html).
 
@@ -393,42 +390,31 @@ Completing the integration requires:
 3. AWS Lambda: deploy `lambda_handler.py` as `vigilant-alexa-announcer`
 4. Set `ALEXA_ENABLED=true` in backend env vars once the skill is certified
 
-This is tracked as future work. The core detection pipeline (Ring → MOTIF → Bedrock) is fully functional without it.
+This is tracked as future work. The core detection pipeline (Ring → MOTIF → rule-based explanation) is fully functional without it.
 
 ---
 
-## AWS Bedrock Integration
+## Explainable by Design
 
-File: `backend/bedrock_integration/explanation_generator.py`
+File: `backend/explanation/explainer.py`
 
-- Model: `us.anthropic.claude-3-5-haiku-20241022-v1:0` (cross-region inference profile, us-east-1)
-- Configurable via `BEDROCK_MODEL_ID` env var
-- Uses Converse API (`client.converse(...)`) — cleaner than raw `invoke_model`
-- Max tokens: 150 (keeps explanations tight)
-- Temperature: 0.3 (consistent, not creative)
-- Tone adjusts automatically by salience:
-  - Salience > 7 → alert but not alarmist ("Worth checking into")
-  - Salience 4–7 → informational ("This is different from usual")
-  - Salience < 4 → low-key FYI ("Just flagged as slightly unusual")
-- Explanations cached by `(pattern_type, salience_bucket)` for 6 hours
-- If Bedrock is unavailable, dashboard degrades gracefully — pattern shown, explanation blank
-- Requires model access to be enabled in the Bedrock console for your account
+Every flagged pattern comes with a plain-language explanation derived entirely from the MOTIF score data — no LLM, no network calls, no external API keys required.
 
-Add to `.env` to enable:
-```
-AWS_ACCESS_KEY_ID=your_key
-AWS_SECRET_ACCESS_KEY=your_secret
-AWS_DEFAULT_REGION=us-east-1
-```
+The `RuleBasedExplainer` generates two types of output:
 
-IAM minimum permissions:
-```json
-{
-  "Effect": "Allow",
-  "Action": ["bedrock:InvokeModel"],
-  "Resource": "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0"
-}
-```
+**Pattern explanation** (`generate_explanation(pattern_data)`): builds a 1–2 sentence explanation from the actual event sequence and scores.
+
+| Layer | What drives the explanation |
+|---|---|
+| `pattern_type` | Template sentence specific to rapid_return, loitering, delivery, etc. |
+| `novelty_score ≥ 8` | "No matching sequence in the learned baseline" |
+| `novelty_score 6–8` | "Rarely seen in the baseline" |
+| `adaptation_score ≥ 9` | "First time this sequence has been recorded" |
+| cameras + timestamps | Real camera names and local time from `HOME_TIMEZONE` |
+
+**Daily digest** (`generate_daily_summary(patterns, date)`): total counts, flagged count with highest-salience pattern, breakdown by type.
+
+No API keys, environment variables, or internet access needed for explanations to work.
 
 ---
 
@@ -463,17 +449,17 @@ DATABASE_URL=postgresql://postgres:vigilant@localhost:5432/vigilant
 - [x] Baseline auto-learning — low-salience patterns written to DB automatically
 - [x] Baseline hydration on startup — MOTIF engine loads from DB on every boot
 - [x] Pattern classification (rapid_return, unusual_entrance, delivery, loitering, etc.)
-- [x] Bedrock integration with prompt templates, 6h cache, graceful fallback
+- [x] Rule-based explanation engine — deterministic, no API keys, driven by real MOTIF scores
 - [x] Ring simulator — realistic events every 5s, no hardware needed
 - [x] **Official Ring Partner API foundation** — one-way account linking, signed webhooks, encrypted token storage, no automatic simulator fallback
 - [x] FastAPI backend fully wired to SQLite/Postgres via SQLAlchemy
 - [x] React dashboard — Patterns / Analytics / Events tabs, 30s polling
 - [x] Pattern detail view — click any card for score breakdown + explanation
 - [x] **7-day baseline comparison chart** — AreaChart with color-coded dots, flag badges, responsive
-- [x] Demo seed endpoint — simulator mode (no token) or official mode (DEMO_SEED_TOKEN), labeled `[Sample]`; `/demo/clear` to clean up after judge demos
+- [x] Demo seed endpoint — simulator mode (no token) or official mode (DEMO_SEED_TOKEN); `/demo/clear` to clean up after judge demos
 - [x] **Daily digest** — `GET /daily-summary` + Analytics tab digest card (stat tiles, noise %, top alert, pattern breakdown)
 - [x] Vercel deployment — frontend + backend both live
-- [x] CI pipeline — GitHub Actions, 68 tests passing
+- [x] CI pipeline — GitHub Actions, 80 tests passing
 - [x] FRICTION_LOG.md — real dev issues documented
 
 ### Next Up / Planned
@@ -486,17 +472,16 @@ DATABASE_URL=postgresql://postgres:vigilant@localhost:5432/vigilant
 ## Key Files to Read First
 
 1. `backend/motif_engine/motif_core.py` — the core algorithm
-2. `backend/bedrock_integration/explanation_generator.py` — how prompts are built
+2. `backend/explanation/explainer.py` — how explanations are built from MOTIF scores
 3. `backend/database/repository.py` — all DB reads/writes
 4. `backend/api/routes.py` — all API endpoints
 5. `frontend/src/App.jsx` + `frontend/src/components/PatternCard.jsx` — UI entry points
-6. `prompts/VIGILANT_Exact_Prompts.md` — full Bedrock prompt reference
 
 ---
 
 ## Hackathon Notes
 
-- **Track:** Ring (Primary) + AWS Builder (Mini Challenge)
+- **Track:** Ring (Primary)
 - **Build period:** Sept 26 – Oct 24, 2026 (28 days)
 - **Bonus:** Fill `FRICTION_LOG.md` as you hit issues — worth up to +10% on judging score
 - The `prompts/` folder has ready-to-paste templates for Ring integration, DB schema, dashboard components, and more

@@ -162,6 +162,9 @@ export default function App() {
             )}
             {tab === "events" && <EventTimeline homeId={HOME_ID} />}
           </main>
+          <footer style={styles.footer}>
+            <a href={`${import.meta.env.VITE_API_URL || ""}/privacy`} style={styles.footerLink} target="_blank" rel="noreferrer">Privacy</a>
+          </footer>
         </>
       )}
     </div>
@@ -170,6 +173,8 @@ export default function App() {
 
 const styles = {
   app: { maxWidth: 760, margin: "0 auto", padding: "0 16px 40px", fontFamily: "sans-serif" },
+  footer: { marginTop: 24, paddingTop: 12, borderTop: "1px solid #e2e8f0", textAlign: "center" },
+  footerLink: { fontSize: 12, color: "#a0aec0", textDecoration: "none" },
   header: { padding: "24px 0 8px", borderBottom: "2px solid #2d3748", marginBottom: 16 },
   logo: { margin: 0, fontSize: 28, letterSpacing: 2, color: "#1a202c" },
   sub: { fontSize: 13, color: "#718096" },

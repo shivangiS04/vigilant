@@ -116,4 +116,22 @@ Issues encountered during the Ring track build. Each entry is a real problem we 
 
 ---
 
+## 8. Ring account linking — Portal shows "connected" but app never received the callback
+
+**Task:** Verify end-to-end Ring account linking: Ring app authorization → our `/ring/token` + `/ring/link` → `linked_accounts: 1`.
+
+**Steps taken:** Authorized VIGILANT in the Ring app through the normal "Link Partner App" flow. Ring Developer Portal showed the account as authorized. Queried `/health` → `linked_accounts: 0`. Searched 100 Vercel invocation logs for any request to `/ring/link`, `/ring/token`, or `/ring/webhook`.
+
+**Expected:** At least one invocation log for `/ring/token` (Ring's server POSTs the authorization code) and one for `/ring/link` (Ring redirects the user's browser with a nonce).
+
+**Actual:** Zero log entries for either path. The authorization showed as completed on Ring's side, but neither the Token Exchange URL nor the Account Link URL received any request. Two plausible root causes remain unconfirmed: (1) the Portal URLs pointed to a stale preview deployment URL rather than the stable alias, so Ring's requests went to a URL that was no longer active; (2) the account was linked while the backend was still writing to the ephemeral SQLite `/tmp` database — once Neon Postgres was connected and the Vercel env vars updated, those tokens were gone.
+
+**Severity:** Critical — the primary integration feature shows zero data despite a successful Ring authorization.
+
+**Workaround:** Added correlation-ID structured logging to all three linking endpoints (`/ring/link`, `/ring/token`, `/ring/link/claim`) so the next attempt will be fully traceable in Vercel logs. Added `last_link_attempt` to `/ring/status` for quick in-API diagnostics. Documented exact Portal URL requirements and a click-by-click re-link checklist in `docs/ring_link_debug.md`.
+
+**Suggestion for Ring:** Add a webhook delivery log in the Developer Portal Test page that shows each outbound POST (URL, timestamp, HTTP response code). This would let developers confirm immediately whether Ring's server actually attempted the callback, rather than having to instrument their own app to find out why nothing arrived.
+
+---
+
 *Last updated: October 2026. Entries will be updated as the build progresses.*

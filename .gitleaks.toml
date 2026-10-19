@@ -1,0 +1,19 @@
+[allowlist]
+  description = "Placeholder and redacted values in documentation"
+  regexes = [
+    # Values that are clearly placeholders, not real secrets
+    '''\[REDACTED''',
+    '''<generate with:''',
+    '''<Ring Developer Portal''',
+    '''<Fernet key generated''',
+    '''<stable random''',
+    '''<PBKDF2 hash''',
+    '''<your IAM''',
+    '''<Neon connection''',
+    # Docker example with hardcoded demo password
+    '''POSTGRES_PASSWORD=vigilant''',
+  ]
+  paths = [
+    # Submission docs are documentation, not config files
+    '''submission/''',
+  ]

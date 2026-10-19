@@ -5,6 +5,7 @@ All state is persisted to SQLite (dev) or Postgres (prod).
 
 import hmac
 import json
+import logging
 import os
 import secrets
 import uuid
@@ -12,6 +13,9 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import List, Optional
 from urllib.parse import parse_qs
+
+logger = logging.getLogger("vigilant.ring")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +25,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 from backend.motif_engine.motif_core import MotifEngine, RingEvent as MotifRingEvent
-from backend.bedrock_integration.explanation_generator import ExplanationGenerator
+from backend.explanation.explainer import RuleBasedExplainer
 from backend.database.session import get_db, init_db
 from backend.database import repository as repo
 from backend.database.models import Pattern as PatternModel, RingEvent as RingEventModel
@@ -47,23 +51,45 @@ app.add_middleware(
     https_only=os.getenv("RING_COOKIE_SECURE", "false").lower() == "true",
 )
 
-_ALLOWED_ORIGINS = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:3000"
-).split(",")
+_ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS")
+_ALLOWED_ORIGINS = (
+    [o.strip() for o in _ALLOWED_ORIGINS_ENV.split(",") if o.strip()]
+    if _ALLOWED_ORIGINS_ENV
+    else ["http://localhost:3000"]
+)
+# Only apply the wildcard regex when no explicit list is configured.
+# In production, set ALLOWED_ORIGINS to the exact frontend URL(s).
+_ORIGIN_REGEX = None if _ALLOWED_ORIGINS_ENV else r"https://.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 motif = MotifEngine()
-bedrock = ExplanationGenerator()
+explainer = RuleBasedExplainer()
 alexa = AlexaClient()
-ring_pipeline = RingEventPipeline(motif, bedrock, alexa)
+ring_pipeline = RingEventPipeline(motif, explainer, alexa)
+
+# In-memory: last 5 link attempts for /ring/status visibility.
+# Not persisted across restarts but survives within one Vercel function instance.
+_link_attempts: list = []
+
+
+def _record_link_attempt(correlation_id: str, step: str, ok: bool, error: str = "") -> None:
+    entry = {
+        "at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        "correlation_id": correlation_id,
+        "step": step,
+        "ok": ok,
+        "error": error,
+    }
+    _link_attempts.append(entry)
+    if len(_link_attempts) > 5:
+        _link_attempts.pop(0)
 
 
 @app.on_event("startup")
@@ -141,8 +167,6 @@ def health():
         and os.getenv("VIGILANT_ACCOUNT_EMAIL")
         and os.getenv("VIGILANT_ACCOUNT_PASSWORD_HASH")
     )
-    # Bedrock
-    bedrock_configured = bool(os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"))
     # DB
     db_ok = False
     try:
@@ -173,18 +197,51 @@ def health():
                 "reason": None if ring_link_configured else "RING_TOKEN_ENCRYPTION_KEY / RING_SESSION_SECRET / VIGILANT_ACCOUNT_EMAIL / VIGILANT_ACCOUNT_PASSWORD_HASH not set",
                 "linked_accounts": linked_accounts,
             },
-            "bedrock_explanations": {
-                "enabled": bedrock_configured,
-                "model": os.getenv("BEDROCK_MODEL_ID", bedrock.MODEL_ID),
-                "reason": None if bedrock_configured else "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set — explanations will show 'unavailable'",
+            "explanations": {
+                "enabled": True,
+                "type": "rule_based",
             },
             "database": {
                 "ok": db_ok,
                 "url_type": "postgres" if (os.getenv("DATABASE_URL") or "").startswith("postgresql") else "sqlite",
             },
             "ring_integration_mode": os.getenv("RING_INTEGRATION_MODE", "official"),
+            "warnings": (
+                ["RING_INTEGRATION_MODE=simulator — production should use official mode"]
+                if os.getenv("RING_INTEGRATION_MODE", "official").lower() == "simulator"
+                else []
+            ),
         },
     }
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_policy():
+    """Plain-language privacy disclosure — what VIGILANT collects, stores, and how to delete it."""
+    body = (
+        "<div class=logo>VIGILANT</div>"
+        "<div class=tagline>Behavioral intelligence for connected homes</div>"
+        "<h2>Privacy</h2>"
+        "<p style='font-size:.9rem;margin-bottom:1rem'>"
+        "VIGILANT receives motion, doorbell, and vehicle detection event notifications from your Ring devices "
+        "via the Ring Partner API. No video or audio is ever accessed or stored."
+        "</p>"
+        "<p style='font-size:.9rem;margin-bottom:1rem'>"
+        "Event data (timestamp, camera name, event type) is stored in a database to learn the normal activity "
+        "pattern for your home. Ring OAuth access tokens are stored in the same database, encrypted at rest "
+        "using AES-128 (Fernet). No data is shared with third parties."
+        "</p>"
+        "<p style='font-size:.9rem;margin-bottom:1rem'>"
+        "Data is retained for as long as your Ring account is linked. To delete all stored data, "
+        "remove VIGILANT's access in the Ring app. If you are a judge running the demo, "
+        "call <code>POST /demo/clear</code> with your demo token to wipe all seeded records."
+        "</p>"
+        "<p style='font-size:.9rem;margin-bottom:1rem'>"
+        "VIGILANT was built for the Amazon Developer Hackathon 2026. It is a prototype and is not "
+        "a commercial product. For questions, contact the team via the GitHub repository."
+        "</p>"
+    )
+    return HTMLResponse(_link_page("VIGILANT — Privacy", body))
 
 
 def _partner_signin_ready() -> bool:
@@ -229,16 +286,59 @@ async def _read_form(request: Request) -> dict:
     return {key: values[-1] for key, values in parsed.items()}
 
 
-def _signin_form(csrf_token: str) -> str:
+_LINK_CSS = """
+:root{--bg:#f8fafc;--fg:#1a202c;--card:#fff;--border:#e2e8f0;--accent:#4f46e5;--accent-fg:#fff;--muted:#718096;--err:#e53e3e;color-scheme:light}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f172a;--fg:#e2e8f0;--card:#1e293b;--border:#334155;--accent:#818cf8;--accent-fg:#0f172a;--muted:#94a3b8;--err:#fc8181;color-scheme:dark}}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:1.5rem max(1rem,env(safe-area-inset-left,0px))}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:2rem;width:100%;max-width:440px}
+.logo{font-size:1.4rem;font-weight:700;letter-spacing:-.02em;color:var(--accent);margin-bottom:.25rem}
+.tagline{font-size:.85rem;color:var(--muted);margin-bottom:1.75rem}
+h2{font-size:1.1rem;font-weight:600;margin-bottom:1rem}
+.field{display:flex;flex-direction:column;gap:.3rem;margin-bottom:1rem}
+label{font-size:.85rem;font-weight:500;color:var(--muted)}
+input{background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:7px;padding:.6rem .8rem;font-size:1rem;width:100%;outline:none}
+input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent)}
+.btn{background:var(--accent);color:var(--accent-fg);border:none;border-radius:7px;padding:.65rem 1.25rem;font-size:.95rem;font-weight:600;width:100%;cursor:pointer;margin-top:.5rem}
+.btn:hover{opacity:.9}
+.consent{font-size:.8rem;color:var(--muted);margin-top:1.25rem;line-height:1.5}
+.msg{background:color-mix(in srgb,var(--accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);border-radius:7px;padding:.75rem 1rem;font-size:.9rem;margin-bottom:1rem}
+.err{background:color-mix(in srgb,var(--err) 12%,transparent);border:1px solid color-mix(in srgb,var(--err) 30%,transparent);border-radius:7px;padding:.75rem 1rem;font-size:.9rem;color:var(--err);margin-bottom:1rem}
+footer{margin-top:1.5rem;font-size:.78rem;color:var(--muted);text-align:center}
+footer a{color:var(--muted);text-decoration:underline}
+"""
+
+
+def _link_page(title: str, body: str) -> str:
     return (
-        "<!doctype html><html><head><title>Vigilant sign in</title></head><body>"
-        "<main><h1>Sign in to Vigilant</h1>"
+        "<!doctype html><html lang=en><head>"
+        f"<meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{escape(title)}</title>"
+        f"<style>{_LINK_CSS}</style></head><body>"
+        f"<div class=card>{body}</div>"
+        "<footer><a href=/privacy>Privacy</a></footer>"
+        "</body></html>"
+    )
+
+
+def _signin_form(csrf_token: str) -> str:
+    body = (
+        "<div class=logo>VIGILANT</div>"
+        "<div class=tagline>Behavioral intelligence for connected homes</div>"
+        "<h2>Sign in to continue</h2>"
         "<form method=post action=/ring/login>"
         f"<input type=hidden name=csrf_token value=\"{escape(csrf_token, quote=True)}\">"
-        "<label>Email <input type=email name=email required autocomplete=username></label>"
-        "<label>Password <input type=password name=password required autocomplete=current-password></label>"
-        "<button type=submit>Sign in</button></form></main></body></html>"
+        "<div class=field><label for=email>Email</label>"
+        "<input id=email type=email name=email required autocomplete=username placeholder=you@example.com></div>"
+        "<div class=field><label for=password>Password</label>"
+        "<input id=password type=password name=password required autocomplete=current-password></div>"
+        "<button class=btn type=submit>Sign in</button>"
+        "</form>"
+        "<p class=consent>VIGILANT will request read access to your Ring device events "
+        "to learn your home's normal activity patterns. No video or audio is accessed. "
+        "You can unlink at any time. <a href=/privacy>Privacy policy</a>.</p>"
     )
+    return _link_page("Vigilant — Sign in", body)
 
 
 def _ring_homepage(request: Request, message: str = "") -> str:
@@ -248,13 +348,21 @@ def _ring_homepage(request: Request, message: str = "") -> str:
     csrf = escape(_csrf_token(request), quote=True)
     pending = request.session.get("pending_ring_link")
     if pending:
-        return (
-            "<!doctype html><html><head><title>Link Ring to Vigilant</title></head><body>"
-            "<main><h1>Link Ring to Vigilant</h1>"
-            "<p>Confirm linking the Ring account authorized in the Ring app.</p>"
+        body = (
+            "<div class=logo>VIGILANT</div>"
+            "<div class=tagline>Behavioral intelligence for connected homes</div>"
+            "<h2>Link your Ring account</h2>"
+            "<div class=msg>A Ring account authorization is waiting for confirmation.</div>"
+            "<p style='font-size:.9rem;margin-bottom:1rem'>By confirming, you authorize VIGILANT to receive "
+            "motion and doorbell event notifications from your Ring devices. "
+            "VIGILANT processes event <em>sequences</em> — not video or audio — to detect "
+            "behavioral patterns that deviate from your home's learned baseline.</p>"
             f"<form method=post action=/ring/link/claim><input type=hidden name=csrf_token value=\"{csrf}\">"
-            "<button type=submit>Confirm Ring account link</button></form></main></body></html>"
+            "<button class=btn type=submit>Confirm Ring account link</button></form>"
+            "<p class=consent>You can remove access at any time via the Ring app or by contacting VIGILANT. "
+            "<a href=/privacy>Privacy policy</a>.</p>"
         )
+        return _link_page("VIGILANT — Link Ring account", body)
 
     with get_db() as db:
         accounts = (
@@ -263,27 +371,45 @@ def _ring_homepage(request: Request, message: str = "") -> str:
             .all()
         )
     connected = sum(1 for account in accounts if account.status == "completed")
-    status = escape(message or "Connected Ring account(s): {0}".format(connected))
-    return (
-        "<!doctype html><html><head><title>Vigilant Ring settings</title></head><body>"
-        f"<main><h1>Vigilant</h1><p>{status}</p>"
-        "<p>Manage device access in the Ring app.</p></main></body></html>"
+    msg_html = (
+        f"<div class=msg>{escape(message)}</div>" if message
+        else f"<div class=msg>{connected} Ring account{'s' if connected != 1 else ''} connected.</div>"
     )
+    body = (
+        "<div class=logo>VIGILANT</div>"
+        "<div class=tagline>Behavioral intelligence for connected homes</div>"
+        "<h2>Ring connection</h2>"
+        + msg_html +
+        "<p style='font-size:.9rem'>Manage device permissions in the Ring app. "
+        "<a href=/privacy>Privacy policy</a>.</p>"
+    )
+    return _link_page("VIGILANT — Ring settings", body)
 
 
 @app.get("/ring", response_class=HTMLResponse)
 def ring_homepage(request: Request):
     if not _partner_signin_ready():
-        return HTMLResponse("<h1>Ring linking is not configured</h1>", status_code=503)
+        body = (
+            "<div class=logo>VIGILANT</div>"
+            "<div class=tagline>Behavioral intelligence for connected homes</div>"
+            "<div class=err>Ring account linking is not configured on this server.</div>"
+        )
+        return HTMLResponse(_link_page("VIGILANT — Not configured", body), status_code=503)
     return HTMLResponse(_ring_homepage(request))
 
 
 @app.get("/ring/link", response_class=HTMLResponse)
 def ring_account_link(request: Request, time: str = Query(...), nonce: str = Query(...)):
+    cid = uuid.uuid4().hex[:8]
+    logger.info("[%s] ring/link: callback received time=%s nonce_len=%d", cid, time, len(nonce))
     if not _partner_signin_ready():
+        logger.error("[%s] ring/link: partner sign-in not configured (RING_SESSION_SECRET/VIGILANT_ACCOUNT_EMAIL/VIGILANT_ACCOUNT_PASSWORD_HASH)", cid)
+        _record_link_attempt(cid, "account_link_callback", False, "partner sign-in not configured")
         raise HTTPException(status_code=503, detail="Vigilant account sign-in is not configured")
-    request.session["pending_ring_link"] = {"time": time, "nonce": nonce}
+    request.session["pending_ring_link"] = {"time": time, "nonce": nonce, "cid": cid}
     _csrf_token(request)
+    logger.info("[%s] ring/link: nonce stored in session, showing sign-in page", cid)
+    _record_link_attempt(cid, "account_link_callback", True)
     return HTMLResponse(_ring_homepage(request))
 
 
@@ -313,15 +439,23 @@ async def ring_partner_login(request: Request):
 
 @app.post("/ring/link/claim", response_class=HTMLResponse)
 async def ring_link_claim(request: Request):
+    pending = request.session.get("pending_ring_link") or {}
+    cid = pending.get("cid") or uuid.uuid4().hex[:8]
     if not request.session.get("partner_user_id"):
+        logger.warning("[%s] ring/link/claim: no partner_user_id in session (sign-in not completed)", cid)
+        _record_link_attempt(cid, "claim", False, "not signed in to Vigilant")
         raise HTTPException(status_code=401, detail="Sign in to Vigilant before linking Ring")
     form = await _read_form(request)
     if not _valid_csrf(request, str(form.get("csrf_token", ""))):
+        logger.warning("[%s] ring/link/claim: CSRF mismatch", cid)
+        _record_link_attempt(cid, "claim", False, "CSRF mismatch")
         raise HTTPException(status_code=403, detail="Invalid account-link request")
-    pending = request.session.get("pending_ring_link")
     if not pending:
+        logger.warning("[%s] ring/link/claim: no pending_ring_link in session", cid)
+        _record_link_attempt(cid, "claim", False, "no pending link in session")
         raise HTTPException(status_code=400, detail="No Ring account-link request is pending")
 
+    logger.info("[%s] ring/link/claim: starting claim (time=%s)", cid, pending.get("time"))
     try:
         with get_db() as db:
             account = await run_in_threadpool(
@@ -333,44 +467,72 @@ async def ring_link_claim(request: Request):
                 db,
             )
             account_id = account.account_id
+        logger.info("[%s] ring/link/claim: account %s… linked ok", cid, account_id[:4] if account_id else "?")
+        _record_link_attempt(cid, "claim", True)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        eid = uuid.uuid4().hex[:8]
+        logger.error("[%s] ring/link/claim: nonce/account error eid=%s — %s", cid, eid, exc, exc_info=True)
+        _record_link_attempt(cid, "claim", False, str(exc))
+        raise HTTPException(status_code=400, detail=f"Linking failed (err:{eid})") from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        eid = uuid.uuid4().hex[:8]
+        logger.error("[%s] ring/link/claim: config error eid=%s — %s", cid, eid, exc, exc_info=True)
+        _record_link_attempt(cid, "claim", False, str(exc))
+        raise HTTPException(status_code=503, detail=f"Service unavailable (err:{eid})") from exc
     except RingPartnerAPIError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        eid = uuid.uuid4().hex[:8]
+        logger.error("[%s] ring/link/claim: Ring API error eid=%s — %s", cid, eid, exc, exc_info=True)
+        _record_link_attempt(cid, "claim", False, str(exc))
+        raise HTTPException(status_code=502, detail=f"Ring API error (err:{eid})") from exc
 
     request.session.pop("pending_ring_link", None)
     return HTMLResponse(_ring_homepage(request, "Ring account linked: " + escape(account_id)))
 
 
-def _receive_ring_code(code: str) -> str:
+def _receive_ring_code(code: str) -> str:  # returns account_id
     with get_db() as db:
         return receive_authorization_code(code, db)
 
 
 @app.post("/ring/token")
 async def ring_token_exchange(request: Request):
+    cid = uuid.uuid4().hex[:8]
+    logger.info("[%s] ring/token: request received from %s", cid, request.client.host if request.client else "unknown")
     values = await _read_form(request)
     expected_client_id = os.getenv("RING_CLIENT_ID", "")
     supplied_client_id = values.get("client_id")
     if not expected_client_id:
+        logger.error("[%s] ring/token: RING_CLIENT_ID not configured", cid)
+        _record_link_attempt(cid, "token_exchange", False, "RING_CLIENT_ID not configured")
         raise HTTPException(status_code=503, detail="Ring client ID is not configured")
     if supplied_client_id is not None and (
         not isinstance(supplied_client_id, str)
         or not hmac.compare_digest(supplied_client_id, expected_client_id)
     ):
+        logger.warning("[%s] ring/token: client_id mismatch", cid)
+        _record_link_attempt(cid, "token_exchange", False, "client_id mismatch")
         raise HTTPException(status_code=401, detail="Unexpected Ring client ID")
     code = values.get("code") or values.get("authorization_code")
     if not isinstance(code, str) or not code:
+        logger.warning("[%s] ring/token: missing authorization code", cid)
+        _record_link_attempt(cid, "token_exchange", False, "missing authorization code")
         raise HTTPException(status_code=400, detail="Missing Ring authorization code")
 
+    logger.info("[%s] ring/token: client_id ok, code present (len=%d), calling Ring OAuth", cid, len(code))
     try:
-        await run_in_threadpool(_receive_ring_code, code)
+        account_id = await run_in_threadpool(_receive_ring_code, code)
+        logger.info("[%s] ring/token: tokens stored for account %s…", cid, account_id[:4] if account_id else "?")
+        _record_link_attempt(cid, "token_exchange", True)
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        eid = uuid.uuid4().hex[:8]
+        logger.error("[%s] ring/token: config error eid=%s — %s", cid, eid, exc, exc_info=True)
+        _record_link_attempt(cid, "token_exchange", False, str(exc))
+        raise HTTPException(status_code=503, detail=f"Service unavailable (err:{eid})") from exc
     except RingPartnerAPIError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        eid = uuid.uuid4().hex[:8]
+        logger.error("[%s] ring/token: Ring API error eid=%s — %s", cid, eid, exc, exc_info=True)
+        _record_link_attempt(cid, "token_exchange", False, str(exc))
+        raise HTTPException(status_code=502, detail=f"Ring API error (err:{eid})") from exc
     return {"status": "accepted"}
 
 
@@ -439,12 +601,17 @@ def _process_ring_event_background(event: dict, home_id: str, request_id: str) -
         repo.mark_webhook_processed(db, request_id)
 
 
+_WEBHOOK_MAX_BYTES = 64 * 1024  # 64 KB — Ring payloads are tiny; reject oversized bodies early
+
+
 @app.post("/ring/webhook")
 async def ring_webhook(request: Request, background_tasks: BackgroundTasks):
     signing_key = os.getenv("RING_HMAC_SIGNING_KEY")
     if not signing_key:
         raise HTTPException(status_code=503, detail="Ring webhook signing key is not configured")
     raw_body = await request.body()
+    if len(raw_body) > _WEBHOOK_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Webhook body too large")
     if not verify_webhook_signature(
         signing_key, raw_body, request.headers.get("x-signature", "")
     ):
@@ -469,7 +636,9 @@ async def ring_webhook(request: Request, background_tasks: BackgroundTasks):
             _persist_ring_webhook, payload, normalized_event
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        eid = uuid.uuid4().hex[:8]
+        logger.error("ring/webhook: persistence error eid=%s — %s", eid, exc, exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Webhook processing failed (err:{eid})") from exc
 
     if pipeline_event is not None:
         request_id = payload["meta"]["request_id"]
@@ -529,8 +698,8 @@ def ring_status():
                 {"id": c.id, "name": c.name, "home_id": c.home_id}
                 for c in cameras
             ]
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("ring_status DB query failed: %s", _e)
 
     return {
         "ring_configured": bool(
@@ -543,6 +712,7 @@ def ring_status():
         "linked_account_count": len(linked_accounts),
         "devices": devices,
         "last_webhook": last_webhook,
+        "last_link_attempt": _link_attempts[-1] if _link_attempts else None,
         "mode": os.getenv("RING_INTEGRATION_MODE", "official"),
     }
 
@@ -646,7 +816,7 @@ def score_pattern(req: ScoreRequest):
     }
 
     if score.flagged:
-        explanation = bedrock.generate_explanation(pattern_data)
+        explanation = explainer.generate_explanation(pattern_data)
     else:
         explanation = "Pattern within normal parameters."
 
@@ -777,6 +947,7 @@ def seed_demo_data(
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     h = home_id  # short alias for id prefixing
+    _ex = RuleBasedExplainer()
     demo_events = [
         {"id": f"{h}_e1",  "camera_id": "front_door",  "type": "person_detected",  "confidence": 0.95, "timestamp": (now - timedelta(hours=2, minutes=5)).isoformat(),  "home_id": home_id},
         {"id": f"{h}_e2",  "camera_id": "front_door",  "type": "motion_detected",  "confidence": 0.91, "timestamp": (now - timedelta(hours=2, minutes=4)).isoformat(),  "home_id": home_id},
@@ -794,11 +965,11 @@ def seed_demo_data(
     ]
 
     demo_patterns = [
-        {"id": f"{h}_p1", "home_id": home_id, "pattern_type": "rapid_return",       "fingerprint": "fp1", "salience_score": 8.2, "novelty_score": 9.0, "adaptation_score": 10.0, "temporal_weight": 0.8, "competition_score": 10.0, "flagged": True,  "explanation": "[Sample] Someone returned home just 8 minutes after leaving — far shorter than the usual 4+ hours — and entered through the side door instead of the front. Worth a quick check.", "detected_at": (now - timedelta(hours=2)).isoformat(), "event_ids": [f"{h}_e1", f"{h}_e2", f"{h}_e4"]},
-        {"id": f"{h}_p2", "home_id": home_id, "pattern_type": "delivery",           "fingerprint": "fp2", "salience_score": 5.1, "novelty_score": 5.0, "adaptation_score": 5.0,  "temporal_weight": 0.8, "competition_score": 7.0,  "flagged": False, "explanation": "[Sample] A vehicle pulled up and a person approached the front door — likely a package delivery around the usual midday window.", "detected_at": (now - timedelta(hours=1, minutes=40)).isoformat(), "event_ids": [f"{h}_e3", f"{h}_e5", f"{h}_e6"]},
-        {"id": f"{h}_p3", "home_id": home_id, "pattern_type": "unusual_entrance",   "fingerprint": "fp3", "salience_score": 7.5, "novelty_score": 8.0, "adaptation_score": 9.0,  "temporal_weight": 1.0, "competition_score": 5.0,  "flagged": True,  "explanation": "[Sample] Activity detected at the side door during an unusual time — this entrance is rarely used and wasn't part of any expected pattern today.", "detected_at": (now - timedelta(minutes=10)).isoformat(), "event_ids": [f"{h}_e8"]},
-        {"id": f"{h}_p4", "home_id": home_id, "pattern_type": "standard_activity",  "fingerprint": "fp4", "salience_score": 2.8, "novelty_score": 2.0, "adaptation_score": 3.0,  "temporal_weight": 0.8, "competition_score": 3.0,  "flagged": False, "explanation": "[Sample] Backyard motion — consistent with wind or an animal. No person detected.", "detected_at": (now - timedelta(minutes=22)).isoformat(), "event_ids": [f"{h}_e7"]},
-        {"id": f"{h}_p5", "home_id": home_id, "pattern_type": "late_first_activity", "fingerprint": "fp5", "salience_score": 6.8, "novelty_score": 7.0, "adaptation_score": 8.0,  "temporal_weight": 0.5, "competition_score": 5.0,  "flagged": True,  "explanation": "[Sample] First activity of the day didn't appear until mid-afternoon — earlier days show movement by 9 AM. Could indicate a wellness concern worth checking on.", "detected_at": (now - timedelta(hours=5, minutes=28)).isoformat(), "event_ids": [f"{h}_e11", f"{h}_e12"]},
+        {"id": f"{h}_p1", "home_id": home_id, "pattern_type": "rapid_return",        "fingerprint": "fp1", "salience_score": 8.2, "novelty_score": 9.0, "adaptation_score": 10.0, "temporal_weight": 0.8, "competition_score": 10.0, "flagged": True,  "explanation": _ex.generate_explanation({"pattern_type": "rapid_return",        "novelty_score": 9.0, "adaptation_score": 10.0, "salience_score": 8.2, "events": [{"timestamp": (now - timedelta(hours=2, minutes=5)).isoformat(), "camera": "front_door", "type": "person_detected"}, {"timestamp": (now - timedelta(hours=2, minutes=4)).isoformat(), "camera": "front_door", "type": "motion_detected"}, {"timestamp": (now - timedelta(hours=1, minutes=30)).isoformat(), "camera": "side_door", "type": "person_detected"}]}), "detected_at": (now - timedelta(hours=2)).isoformat(),            "event_ids": [f"{h}_e1", f"{h}_e2", f"{h}_e4"]},
+        {"id": f"{h}_p2", "home_id": home_id, "pattern_type": "delivery",            "fingerprint": "fp2", "salience_score": 5.1, "novelty_score": 5.0, "adaptation_score": 5.0,  "temporal_weight": 0.8, "competition_score": 7.0,  "flagged": False, "explanation": _ex.generate_explanation({"pattern_type": "delivery",            "novelty_score": 5.0, "adaptation_score": 5.0,  "salience_score": 5.1, "events": [{"timestamp": (now - timedelta(hours=1, minutes=45)).isoformat(), "camera": "driveway",   "type": "vehicle_detected"}, {"timestamp": (now - timedelta(minutes=45)).isoformat(),          "camera": "front_door", "type": "doorbell"},         {"timestamp": (now - timedelta(minutes=44)).isoformat(),          "camera": "front_door", "type": "person_detected"}]}), "detected_at": (now - timedelta(hours=1, minutes=40)).isoformat(), "event_ids": [f"{h}_e3", f"{h}_e5", f"{h}_e6"]},
+        {"id": f"{h}_p3", "home_id": home_id, "pattern_type": "unusual_entrance",    "fingerprint": "fp3", "salience_score": 7.5, "novelty_score": 8.0, "adaptation_score": 9.0,  "temporal_weight": 1.0, "competition_score": 5.0,  "flagged": True,  "explanation": _ex.generate_explanation({"pattern_type": "unusual_entrance",    "novelty_score": 8.0, "adaptation_score": 9.0,  "salience_score": 7.5, "events": [{"timestamp": (now - timedelta(minutes=8)).isoformat(),            "camera": "side_door",  "type": "person_detected"}]}),                                                                                                                                                                                                                                                                                           "detected_at": (now - timedelta(minutes=10)).isoformat(),           "event_ids": [f"{h}_e8"]},
+        {"id": f"{h}_p4", "home_id": home_id, "pattern_type": "standard_activity",   "fingerprint": "fp4", "salience_score": 2.8, "novelty_score": 2.0, "adaptation_score": 3.0,  "temporal_weight": 0.8, "competition_score": 3.0,  "flagged": False, "explanation": _ex.generate_explanation({"pattern_type": "standard_activity",   "novelty_score": 2.0, "adaptation_score": 3.0,  "salience_score": 2.8, "events": [{"timestamp": (now - timedelta(minutes=20)).isoformat(),           "camera": "backyard",   "type": "motion_detected"}]}),                                                                                                                                                                                                                                                                                           "detected_at": (now - timedelta(minutes=22)).isoformat(),           "event_ids": [f"{h}_e7"]},
+        {"id": f"{h}_p5", "home_id": home_id, "pattern_type": "late_first_activity", "fingerprint": "fp5", "salience_score": 6.8, "novelty_score": 7.0, "adaptation_score": 8.0,  "temporal_weight": 0.5, "competition_score": 5.0,  "flagged": True,  "explanation": _ex.generate_explanation({"pattern_type": "late_first_activity", "novelty_score": 7.0, "adaptation_score": 8.0,  "salience_score": 6.8, "events": [{"timestamp": (now - timedelta(hours=5, minutes=30)).isoformat(),  "camera": "front_door", "type": "motion_detected"}, {"timestamp": (now - timedelta(hours=5, minutes=25)).isoformat(),  "camera": "front_door", "type": "motion_detected"}]}),                                                                                                               "detected_at": (now - timedelta(hours=5, minutes=28)).isoformat(),  "event_ids": [f"{h}_e11", f"{h}_e12"]},
     ]
 
     seeded_p = 0

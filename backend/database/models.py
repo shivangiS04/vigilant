@@ -8,6 +8,9 @@ Tables:
   patterns    — MOTIF-scored sequences
   baselines   — learned normal patterns per home
 """
+import logging
+
+_log = logging.getLogger(__name__)
 
 from datetime import datetime
 from sqlalchemy import (
@@ -157,4 +160,4 @@ if __name__ == "__main__":
     # local dev: docker run -e POSTGRES_PASSWORD=vigilant -p 5432:5432 postgres
     url = "postgresql://postgres:vigilant@localhost:5432/vigilant"
     engine = create_tables(url)
-    print("Tables created:", list(Base.metadata.tables.keys()))
+    _log.debug("Tables created: %s", list(Base.metadata.tables.keys()))

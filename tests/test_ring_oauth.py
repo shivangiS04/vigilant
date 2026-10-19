@@ -150,6 +150,100 @@ class RingOAuthTests(unittest.TestCase):
         self.assertEqual(decrypt_token(stored_access), "rotated-access")
         self.assertEqual(decrypt_token(stored_refresh), "rotated-refresh")
 
+    def test_nonce_expired_raises_value_error(self):
+        """Nonce timestamp older than 600 seconds must be rejected."""
+        old_time_ms = str((int(time.time()) - 601) * 1000)
+        nonce = compute_account_link_nonce(old_time_ms, "ring-expired-account", "test-hmac-key")
+        with self.session_factory() as db:
+            repo.save_ring_account(
+                db,
+                {
+                    "account_id": "ring-expired-account",
+                    "access_token_encrypted": encrypt_token("tok"),
+                    "refresh_token_encrypted": encrypt_token("ref"),
+                    "access_token_expires_at": datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1),
+                },
+            )
+            db.commit()
+        with self.session_factory() as db:
+            with self.assertRaises(ValueError, msg="expired nonce should raise ValueError"):
+                claim_ring_account(old_time_ms, nonce, "user-1", "u***r@example.com", db)
+
+    def test_bad_nonce_signature_raises_value_error(self):
+        """Nonce signed with wrong key must be rejected even if timestamp is fresh."""
+        time_ms = str(int(time.time()) * 1000)
+        bad_nonce = compute_account_link_nonce(time_ms, "ring-bad-sig-account", "wrong-key")
+        with self.session_factory() as db:
+            repo.save_ring_account(
+                db,
+                {
+                    "account_id": "ring-bad-sig-account",
+                    "access_token_encrypted": encrypt_token("tok"),
+                    "refresh_token_encrypted": encrypt_token("ref"),
+                    "access_token_expires_at": datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1),
+                },
+            )
+            db.commit()
+        with self.session_factory() as db:
+            with self.assertRaises(ValueError, msg="bad nonce should raise ValueError"):
+                claim_ring_account(time_ms, bad_nonce, "user-1", "u***r@example.com", db)
+
+    def test_token_exchange_ring_api_error_propagates(self):
+        """If Ring's token endpoint returns an error the function must raise."""
+        def respond(request):
+            if request.url.path == "/oauth/token":
+                return httpx.Response(401, json={"error": "invalid_client"})
+            return httpx.Response(200, json={})
+
+        client = RingPartnerClient(
+            "client-id", "client-secret", httpx.Client(transport=httpx.MockTransport(respond))
+        )
+        from backend.ring_integration.official_client import RingPartnerAPIError
+        with self.session_factory() as db:
+            with self.assertRaises(RingPartnerAPIError):
+                receive_authorization_code("bad-code", db, client)
+
+    def test_repeat_token_exchange_updates_existing_account(self):
+        """A second token exchange for the same account_id must overwrite the first record."""
+        token_calls = [0]
+
+        def respond(request):
+            if request.url.path == "/oauth/token":
+                token_calls[0] += 1
+                n = token_calls[0]
+                return httpx.Response(200, json={
+                    "access_token": f"access-{n}",
+                    "refresh_token": f"refresh-{n}",
+                    "expires_in": 14400,
+                })
+            return httpx.Response(200, json={"data": {"id": "ring-repeat-account"}})
+
+        client = RingPartnerClient(
+            "client-id", "client-secret", httpx.Client(transport=httpx.MockTransport(respond))
+        )
+        with self.session_factory() as db:
+            id1 = receive_authorization_code("code-1", db, client)
+            db.commit()
+        with self.session_factory() as db:
+            id2 = receive_authorization_code("code-2", db, client)
+            db.commit()
+        with self.session_factory() as db:
+            accounts = db.query(repo.RingAccount).filter(
+                repo.RingAccount.account_id == "ring-repeat-account"
+            ).all()
+
+        self.assertEqual(id1, id2)
+        self.assertEqual(len(accounts), 1, "must not create duplicate DB rows")
+        self.assertEqual(decrypt_token(accounts[0].access_token_encrypted), "access-2")
+
+    def test_claim_without_matching_account_raises_value_error(self):
+        """claim_ring_account must raise ValueError when the account_id has no DB record."""
+        time_ms = str(int(time.time()) * 1000)
+        nonce = compute_account_link_nonce(time_ms, "nonexistent-account", "test-hmac-key")
+        with self.session_factory() as db:
+            with self.assertRaises(ValueError):
+                claim_ring_account(time_ms, nonce, "user-1", "u***r@example.com", db)
+
     def test_account_claim_verifies_nonce_then_links_and_syncs_devices(self):
         now = int(time.time())
         time_parameter = str(now * 1000)
