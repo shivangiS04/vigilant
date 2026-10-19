@@ -210,6 +210,35 @@ def health():
     }
 
 
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_policy():
+    """Plain-language privacy disclosure — what VIGILANT collects, stores, and how to delete it."""
+    body = (
+        "<div class=logo>VIGILANT</div>"
+        "<div class=tagline>Behavioral intelligence for connected homes</div>"
+        "<h2>Privacy</h2>"
+        "<p style='font-size:.9rem;margin-bottom:1rem'>"
+        "VIGILANT receives motion, doorbell, and vehicle detection event notifications from your Ring devices "
+        "via the Ring Partner API. No video or audio is ever accessed or stored."
+        "</p>"
+        "<p style='font-size:.9rem;margin-bottom:1rem'>"
+        "Event data (timestamp, camera name, event type) is stored in a database to learn the normal activity "
+        "pattern for your home. Ring OAuth access tokens are stored in the same database, encrypted at rest "
+        "using AES-128 (Fernet). No data is shared with third parties."
+        "</p>"
+        "<p style='font-size:.9rem;margin-bottom:1rem'>"
+        "Data is retained for as long as your Ring account is linked. To delete all stored data, "
+        "remove VIGILANT's access in the Ring app. If you are a judge running the demo, "
+        "call <code>POST /demo/clear</code> with your demo token to wipe all seeded records."
+        "</p>"
+        "<p style='font-size:.9rem;margin-bottom:1rem'>"
+        "VIGILANT was built for the Amazon Developer Hackathon 2026. It is a prototype and is not "
+        "a commercial product. For questions, contact the team via the GitHub repository."
+        "</p>"
+    )
+    return HTMLResponse(_link_page("VIGILANT — Privacy", body))
+
+
 def _partner_signin_ready() -> bool:
     required = (
         "RING_SESSION_SECRET",
