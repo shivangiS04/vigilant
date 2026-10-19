@@ -196,6 +196,11 @@ def health():
                 "enabled": ring_link_configured,
                 "reason": None if ring_link_configured else "RING_TOKEN_ENCRYPTION_KEY / RING_SESSION_SECRET / VIGILANT_ACCOUNT_EMAIL / VIGILANT_ACCOUNT_PASSWORD_HASH not set",
                 "linked_accounts": linked_accounts,
+                "callback_urls": {
+                    "account_link_url": f"{os.getenv('VIGILANT_BASE_URL', 'https://vigilant-backend-omega.vercel.app')}/ring/link",
+                    "token_exchange_url": f"{os.getenv('VIGILANT_BASE_URL', 'https://vigilant-backend-omega.vercel.app')}/ring/token",
+                    "webhook_url": f"{os.getenv('VIGILANT_BASE_URL', 'https://vigilant-backend-omega.vercel.app')}/ring/webhook",
+                },
             },
             "explanations": {
                 "enabled": True,
@@ -725,6 +730,13 @@ def ring_status():
         "last_webhook": last_webhook,
         "last_link_attempt": _link_attempts[-1] if _link_attempts else None,
         "mode": os.getenv("RING_INTEGRATION_MODE", "official"),
+        # Exact URLs Ring Developer Portal must be configured to call.
+        # Use this to cross-check the Portal configuration without reading source.
+        "callback_urls": {
+            "account_link_url": f"{os.getenv('VIGILANT_BASE_URL', 'https://vigilant-backend-omega.vercel.app')}/ring/link",
+            "token_exchange_url": f"{os.getenv('VIGILANT_BASE_URL', 'https://vigilant-backend-omega.vercel.app')}/ring/token",
+            "webhook_url": f"{os.getenv('VIGILANT_BASE_URL', 'https://vigilant-backend-omega.vercel.app')}/ring/webhook",
+        },
     }
 
 
