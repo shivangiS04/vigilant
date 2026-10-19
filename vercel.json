@@ -27,7 +27,4 @@
       "dest": "frontend/$1"
     }
   ],
-  "env": {
-    "DATABASE_URL": "sqlite:////tmp/vigilant.db"
-  }
 }
