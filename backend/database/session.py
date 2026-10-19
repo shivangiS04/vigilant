@@ -16,7 +16,9 @@ from backend.database.models import Base
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///./vigilant.db"
+_raw_db_url = os.getenv("DATABASE_URL") or "sqlite:///./vigilant.db"
+# SQLAlchemy 2.x defaults to psycopg3; force psycopg2 which is what we ship
+DATABASE_URL = _raw_db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 # SQLite needs check_same_thread=False; ignored by other dialects
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
