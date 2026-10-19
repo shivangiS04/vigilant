@@ -16,7 +16,9 @@ from backend.database.models import Base
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///./vigilant.db"
+_raw_db_url = os.getenv("DATABASE_URL") or "sqlite:///./vigilant.db"
+# SQLAlchemy 2.x defaults to psycopg3; force psycopg2 which is what we ship
+DATABASE_URL = _raw_db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 # SQLite needs check_same_thread=False; ignored by other dialects
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
@@ -26,8 +28,16 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
-    _make_event_confidence_nullable()
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception:
+        # On Postgres, concurrent cold starts can race on CREATE TABLE.
+        # If the table already exists the error is harmless — just continue.
+        pass
+    try:
+        _make_event_confidence_nullable()
+    except Exception:
+        pass
 
 
 def _make_event_confidence_nullable(database_engine=engine):

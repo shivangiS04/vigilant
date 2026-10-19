@@ -106,8 +106,19 @@ def get_camera(db: Session, camera_id: str) -> Optional[Camera]:
 # Events
 # ------------------------------------------------------------------
 
+def get_or_create_camera(db: Session, camera_id: str, home_id: str) -> "Camera":
+    from backend.database.models import Camera
+    cam = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not cam:
+        cam = Camera(id=camera_id, home_id=home_id, name=camera_id)
+        db.add(cam)
+        db.flush()
+    return cam
+
+
 def save_event(db: Session, event_data: dict) -> RingEvent:
     get_or_create_home(db, event_data["home_id"])
+    get_or_create_camera(db, event_data.get("camera_id", event_data.get("camera_name", "unknown")), event_data["home_id"])
     existing = db.query(RingEvent).filter(RingEvent.id == event_data["id"]).first()
     if existing:
         return existing
