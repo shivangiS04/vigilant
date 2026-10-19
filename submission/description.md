@@ -73,7 +73,8 @@ VIGILANT uses the Ring Partner API for the full production integration:
 - **HMAC-signed simulator** — Exercises the real Ring code path locally: builds v1.1 payloads, signs them, and POSTs to `/ring/webhook`. No bypassing of any real code.
 - **React dashboard** — Live noise-reduction stats (X events → Y patterns → Z flagged), Ring connection status panel, 7-day baseline comparison chart, pattern score breakdown, and a feedback loop ("This was normal") that teaches the system.
 - **AWS Bedrock explanations** — Real Bedrock calls on flagged patterns.
-- **Full test suite** — 63 tests including HMAC verification, webhook normalization against official payload shapes, deduplication, and end-to-end webhook → pipeline tests.
+- **Daily digest** — `GET /daily-summary` surfaces a 24h digest card in the Analytics tab: total events, patterns, flagged count, noise reduction %, avg salience, and the top alert explanation.
+- **Full test suite** — 68 tests including HMAC verification, webhook normalization against official payload shapes, deduplication, timezone edge cases, and end-to-end webhook → pipeline tests.
 - **CI pipeline** — GitHub Actions, runs on every push.
 
 ---
@@ -90,7 +91,6 @@ See `FRICTION_LOG.md` for the full record of what we hit and how we solved it.
 
 ## What's Next
 
-- **Persistent Postgres** — SQLite on `/tmp` resets on cold start. Connect a free Neon/Supabase instance for production.
 - **Alexa Proactive Events** — Voice announcements on flagged patterns. The Lambda handler and AlexaClient are built; the Proactive Events skill permissions and Alexa account setup are the remaining steps.
 - **Multi-user identity** — The current account-link flow supports one configured Vigilant account. A full multi-user deployment needs an identity provider (Cognito, Auth0).
 - **Push notifications** — SMS/email via SNS for flagged patterns when the homeowner is away.

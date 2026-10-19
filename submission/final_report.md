@@ -23,28 +23,31 @@
 | AWS Bedrock explanations | ✅ Complete | Claude 3.5 Haiku, Converse API, 6h cache, graceful fallback |
 | Ring status panel (API + UI) | ✅ Complete | `/ring/status` endpoint + `RingStatus.jsx` component |
 | Health endpoint | ✅ Complete | Full feature status, never exposes credential values |
-| Demo seed labeled `[Sample]` | ✅ Complete | Pre-written explanations clearly marked |
+| Demo seed labeled `[Sample]` | ✅ Complete | Token-protected in official mode; `/demo/clear` to reset after judge demo |
+| Daily digest (`GET /daily-summary`) | ✅ Complete | 24h stat card in Analytics tab: event/pattern counts, noise %, top alert |
 | Noise reduction banner | ✅ Complete | X events → Y patterns → Z worth attention, % suppressed |
 | Salience legend | ✅ Complete | Color-coded 0–4 / 4–6 / 6–8 / 8–10 bands |
 | LICENSE | ✅ Complete | MIT, Shivangi Singh + Archisha Srivastava |
 | FRICTION_LOG.md | ✅ Complete | 7 real issues documented |
 | CI pipeline | ✅ Complete | GitHub Actions, runs on every push |
 | Alexa voice announcements | 🔲 Planned | Code written, disabled by default (`ALEXA_ENABLED=false`); skill certification pending |
-| Persistent Postgres | 🔲 Planned | Instructions in README; just set `DATABASE_URL` |
+| Persistent Postgres | ✅ Complete | Set `DATABASE_URL` to Neon connection string in Vercel; no code changes needed |
 
 ---
 
 ## Test Results
 
-**63 passed, 0 failed** (run: `python -m pytest tests/ -q`)
+**68 passed, 0 failed** (run: `python -m pytest tests/ -q`)
 
 | Test file | Tests | What it covers |
 |---|---|---|
 | `test_api.py` | 21 | Health, demo seed, patterns, Ring status, feedback, official mode guard |
 | `test_webhook_pipeline.py` | 22 | HMAC verification, normalization, simulator builder, integration tests |
-| `test_motif.py` | 8 | All four MOTIF scoring layers + pattern classification |
+| `test_motif.py` | 20 | All four MOTIF scoring layers, all pattern types, timezone edge cases, loitering vs. caretaking disambiguation |
 | `test_ring_oauth.py` | 6 | Token encryption/refresh, account linking, nonce expiry |
 | `test_ring_security.py` | 6 | Signature verification edge cases |
+| `test_database_migration.py` | 1 | SQLite nullable-confidence migration integrity |
+| `test_explanation.py` | 9 | Bedrock prompt templates, cache keys, graceful fallback |
 
 Remaining warnings are SQLAlchemy internals (library's own `datetime.utcnow()`) — not our code.
 
@@ -86,14 +89,15 @@ VIGILANT_ACCOUNT_PASSWORD_HASH=<generate with: python -c "from getpass import ge
 AWS_ACCESS_KEY_ID=<your IAM user key>
 AWS_SECRET_ACCESS_KEY=<your IAM user secret>
 AWS_DEFAULT_REGION=us-east-1
-DATABASE_URL=<Neon or Supabase Postgres connection URL>
+DATABASE_URL=<Neon connection string — postgresql://...>
+DEMO_SEED_TOKEN=<generate with: python -c "import secrets; print(secrets.token_urlsafe(32))">
 ```
 
-These are already set (from earlier in this session):
+These must be set from the Ring Developer Portal (do not commit real values):
 ```
-RING_CLIENT_ID=Vigilant_x0Xu0yN4cG5wPsW3LV2lf
-RING_CLIENT_SECRET=H_ZG9BGonJrgIiYcaVPvX4SBYAtyIjn0G1kdYGTWYQv9N_CLy8kYghdS2RDc
-RING_HMAC_SIGNING_KEY=5knh7VAgAOkKVV614yCS9NwV63q7H1yPdnUf7pHZP0w=
+RING_CLIENT_ID=<Ring Developer Portal Client ID>
+RING_CLIENT_SECRET=[REDACTED — rotate in Ring Developer Portal before use]
+RING_HMAC_SIGNING_KEY=[REDACTED — rotate in Ring Developer Portal before use]
 RING_INTEGRATION_MODE=official
 ```
 
