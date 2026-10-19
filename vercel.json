@@ -19,7 +19,7 @@
       "dest": "api/index.py"
     },
     {
-      "src": "/(health|events|patterns|baseline|baseline-comparison|demo)(.*)",
+      "src": "/(health|events|patterns|baseline|baseline-comparison|demo|daily-summary)(.*)",
       "dest": "api/index.py"
     },
     {
