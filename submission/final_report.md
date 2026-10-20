@@ -37,11 +37,11 @@
 
 ## Test Results
 
-**80 passed, 0 failed** (run: `python -m pytest tests/ -q`)
+**88 passed, 0 failed** (run: `python -m pytest tests/ -q`)
 
 | Test file | Tests | What it covers |
 |---|---|---|
-| `test_api.py` | 16 | Health, demo seed, patterns, Ring status, /ring/link render, official mode guard |
+| `test_api.py` | 20 | Health, demo seed, patterns, Ring status, /ring/link render, official mode guard, device source filtering |
 | `test_webhook_pipeline.py` | 17 | HMAC verification, normalization, simulator builder, integration tests |
 | `test_motif.py` | 20 | All four MOTIF scoring layers, all pattern types, timezone edge cases, loitering vs. caretaking disambiguation |
 | `test_ring_oauth.py` | 10 | Token encryption/refresh, account linking, nonce expiry |
