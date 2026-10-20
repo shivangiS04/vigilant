@@ -47,8 +47,54 @@ The core idea comes from neuroscience: Barlow (1961) proposed that sensory neuro
 
 ## How It Works — End to End
 
-```
-Ring Events → MOTIF Engine → Salience Score → Rule-Based Explanation → Dashboard
+![VIGILANT architecture diagram](submission/architecture.png)
+
+```mermaid
+flowchart LR
+    subgraph Ring["Ring"]
+        RA["Ring Partner API\nOAuth · account linking\ndevices API\n(not verified live)"]
+        SIM["Signed Simulator\nHMAC-signed v1.1 payloads"]
+    end
+
+    subgraph Backend["Backend — FastAPI — Vercel"]
+        WH["POST /ring/webhook"]
+        HMAC["HMAC\nsignature check"]
+        NORM["Normalize\nevent type · camera · timestamp"]
+        DEDUP["Dedup\nby request_id"]
+        MOTIF["MOTIF Engine\n5-event sliding window\nnovelty · adaptation\ntemporal · competition\nsalience + pattern type"]
+        EXPL["Rule-based Explainer\npattern → plain-language why"]
+        API["REST API\n/events · /patterns\n/ring/status · /daily-summary"]
+        FB["User Feedback\n'this was normal'\nupserts baseline"]
+    end
+
+    subgraph Data["Data"]
+        DB[("Neon Postgres\nevents · patterns\nbaselines\nRing tokens encrypted")]
+    end
+
+    subgraph Frontend["Frontend — React — Vercel"]
+        DASH["Dashboard\nPatterns · Analytics · Events\nRing Status · Daily Digest"]
+    end
+
+    RA -->|"OAuth / account link"| DB
+    RA -->|"real webhooks"| WH
+    SIM -->|"signed webhook POST"| WH
+    WH --> HMAC
+    HMAC -->|"verified"| NORM
+    NORM -->|"normalized event"| DEDUP
+    DEDUP -->|"save event"| DB
+    DEDUP -->|"5-event window"| MOTIF
+    MOTIF -->|"salience > 6: flag"| EXPL
+    EXPL -->|"save flagged pattern"| DB
+    MOTIF -->|"salience < 4: auto-learn"| DB
+    DB -.->|"load baseline on startup"| MOTIF
+    DASH -->|"'this was normal'"| FB
+    FB -->|"upsert baseline"| DB
+    DASH -->|"GET /events /patterns\n/ring/status /daily-summary"| API
+    API -->|"query"| DB
+    DB -->|"results"| API
+    API -->|"responses"| DASH
+
+    style MOTIF fill:#4f46e5,color:#fff,stroke:#3730a3
 ```
 
 1. **Ring Integration** delivers events (person, motion, vehicle, doorbell) via signed webhooks across all cameras.
