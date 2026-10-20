@@ -47,7 +47,7 @@ The core idea comes from neuroscience: Barlow (1961) proposed that sensory neuro
 
 ## How It Works — End to End
 
-![VIGILANT architecture diagram](submission/architecture.png)
+![VIGILANT architecture diagram](docs/architecture.png)
 
 ```mermaid
 flowchart LR
@@ -168,7 +168,7 @@ vigilant/
 │   │   └── explainer.py            ← Rule-based explainer. Templates per pattern
 │   │                                  type, driven by real MOTIF score data.
 │   ├── ring_integration/
-│   │   ├── api_client.py           ← Development simulator, only when explicitly selected.
+│   │   ├── api_client.py           ← Legacy async event generator (not wired into current stack).
 │   │   ├── official_client.py      ← Official Ring Partner API HTTP/OAuth client.
 │   │   ├── oauth.py                ← Encrypted tokens and one-way account linking.
 │   │   ├── normalization.py        ← Ring webhook/history to Vigilant event mapping.
@@ -337,6 +337,8 @@ Base URL (prod): `https://vigilant-backend-omega.vercel.app`
 | GET | `/baseline?home_id=` | Learned baseline patterns for a home |
 | GET | `/baseline-comparison?home_id=&days=` | 7-day activity vs. historical baseline |
 | GET | `/daily-summary?home_id=` | 24h digest: event/pattern counts, noise reduction %, top alert |
+| GET | `/ring/status` | Ring connection status: linked accounts, last webhook, devices, mode |
+| POST | `/patterns/{id}/feedback` | Mark a pattern "normal" (upserts baseline) or "concerning" |
 | POST | `/demo/seed?home_id=&token=` | Seed dashboard with sample data (simulator, or token in official mode) |
 | POST | `/demo/clear?home_id=&token=` | Remove seeded demo records |
 
@@ -396,6 +398,8 @@ VIGILANT_ACCOUNT_EMAIL=<Vigilant account email>
 VIGILANT_ACCOUNT_PASSWORD_HASH=<PBKDF2 hash for the Vigilant account>
 DATABASE_URL=<durable PostgreSQL connection URL>
 HOME_ID=home_001
+VIGILANT_BASE_URL=<public HTTPS URL of this backend, e.g. https://vigilant-backend-omega.vercel.app>
+HOME_TIMEZONE=Asia/Kolkata
 ```
 
 Generate the token-encryption key and session secret:
@@ -477,6 +481,8 @@ Works with SQLite (zero setup, default) and PostgreSQL (set `DATABASE_URL`).
 | `ring_events` | Raw Ring events (indexed by home + timestamp) |
 | `patterns` | MOTIF-scored sequences with score breakdown + explanation |
 | `baselines` | Auto-learned normal fingerprints per home |
+| `ring_accounts` | Linked Ring accounts; stores Fernet-encrypted access + refresh tokens |
+| `ring_webhook_receipts` | One row per `request_id` for webhook deduplication |
 
 Local Postgres (Docker):
 ```bash
@@ -486,48 +492,3 @@ DATABASE_URL=postgresql://postgres:vigilant@localhost:5432/vigilant
 ```
 
 ---
-
-## What's Done vs. What's Next
-
-### Done
-- [x] MOTIF engine — all four scoring layers with real logic
-- [x] Novelty scoring upgraded to Jaccard similarity (fuzzy, not just exact match)
-- [x] Baseline auto-learning — low-salience patterns written to DB automatically
-- [x] Baseline hydration on startup — MOTIF engine loads from DB on every boot
-- [x] Pattern classification (rapid_return, unusual_entrance, delivery, loitering, etc.)
-- [x] Rule-based explanation engine — deterministic, no API keys, driven by real MOTIF scores
-- [x] Ring simulator — realistic events every 5s, no hardware needed
-- [x] **Official Ring Partner API foundation** — one-way account linking, signed webhooks, encrypted token storage, no automatic simulator fallback
-- [x] FastAPI backend fully wired to SQLite/Postgres via SQLAlchemy
-- [x] React dashboard — Patterns / Analytics / Events tabs, 30s polling
-- [x] Pattern detail view — click any card for score breakdown + explanation
-- [x] **7-day baseline comparison chart** — AreaChart with color-coded dots, flag badges, responsive
-- [x] Demo seed endpoint — simulator mode (no token) or official mode (DEMO_SEED_TOKEN); `/demo/clear` to clean up after judge demos
-- [x] **Daily digest** — `GET /daily-summary` + Analytics tab digest card (stat tiles, noise %, top alert, pattern breakdown)
-- [x] Vercel deployment — frontend + backend both live
-- [x] CI pipeline — GitHub Actions, 80 tests passing
-- [x] FRICTION_LOG.md — real dev issues documented
-
-### Next Up / Planned
-- [ ] **Alexa voice announcements** — Lambda handler + AlexaClient are written; skill certification and Proactive Events API setup are the remaining steps (see [Planned: Alexa Voice Announcements](#planned-alexa-voice-announcements))
-- [x] Persistent Postgres on Vercel — set `DATABASE_URL` to your Neon connection string in Vercel settings; no code changes needed
-- [ ] Push notifications via SNS for flagged patterns when homeowner is away
-
----
-
-## Key Files to Read First
-
-1. `backend/motif_engine/motif_core.py` — the core algorithm
-2. `backend/explanation/explainer.py` — how explanations are built from MOTIF scores
-3. `backend/database/repository.py` — all DB reads/writes
-4. `backend/api/routes.py` — all API endpoints
-5. `frontend/src/App.jsx` + `frontend/src/components/PatternCard.jsx` — UI entry points
-
----
-
-## Hackathon Notes
-
-- **Track:** Ring (Primary)
-- **Build period:** Sept 26 – Oct 24, 2026 (28 days)
-- **Bonus:** Fill `FRICTION_LOG.md` as you hit issues — worth up to +10% on judging score
-- The `prompts/` folder has ready-to-paste templates for Ring integration, DB schema, dashboard components, and more
