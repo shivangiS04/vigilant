@@ -98,8 +98,8 @@ async function recordScene2(browser: Browser) {
   console.log("\n[Scene 2] Dashboard overview…");
   const { ctx, page } = await openScene(browser, "scene2_dashboard");
 
-  await page.goto(FRONTEND, { waitUntil: "networkidle" });
-  await sleep(1500);
+  await page.goto(FRONTEND, { waitUntil: "load" });
+  await sleep(2500);  // let React render + API calls settle
 
   // Park cursor away from interactive elements
   await smoothMove(page, 960, 200);
@@ -142,8 +142,8 @@ async function recordScene3(browser: Browser) {
   console.log("\n[Scene 3] Rapid return detail…");
   const { ctx, page } = await openScene(browser, "scene3_rapid_return");
 
-  await page.goto(FRONTEND, { waitUntil: "networkidle" });
-  await sleep(1200);
+  await page.goto(FRONTEND, { waitUntil: "load" });
+  await sleep(2500);
 
   // Scroll down until a rapid_return card is visible
   let card = page.locator(`[data-pattern-type="${RAPID_RETURN_TYPE}"]`).first();
@@ -225,7 +225,7 @@ async function recordScene5(browser: Browser) {
   console.log("\n[Scene 5] Feedback / learning…");
   const { ctx, page } = await openScene(browser, "scene5_feedback");
 
-  await page.goto(FRONTEND, { waitUntil: "networkidle" });
+  await page.goto(FRONTEND, { waitUntil: "load" });
   await sleep(1200);
 
   // Navigate to rapid_return card
@@ -269,7 +269,7 @@ async function recordScene6(browser: Browser) {
   console.log("\n[Scene 6] Late first activity / caretaking…");
   const { ctx, page } = await openScene(browser, "scene6_caretaking");
 
-  await page.goto(FRONTEND, { waitUntil: "networkidle" });
+  await page.goto(FRONTEND, { waitUntil: "load" });
   await sleep(1200);
 
   let card = page.locator(`[data-pattern-type="${LATE_FIRST_TYPE}"]`).first();
@@ -307,7 +307,7 @@ async function recordScene7(browser: Browser) {
   console.log("\n[Scene 7] Analytics close…");
   const { ctx, page } = await openScene(browser, "scene7_analytics");
 
-  await page.goto(FRONTEND, { waitUntil: "networkidle" });
+  await page.goto(FRONTEND, { waitUntil: "load" });
   await sleep(1500);
 
   // Scan banner slowly
@@ -340,6 +340,89 @@ async function recordScene7(browser: Browser) {
   return closeScene(ctx, "scene7_analytics");
 }
 
+/**
+ * Scene 1 — Title card (0:00–0:15, 15 s)
+ * Dark background, VIGILANT wordmark, tagline — rendered as HTML.
+ */
+async function recordScene1(browser: Browser) {
+  console.log("\n[Scene 1] Title card…");
+  const { ctx, page } = await openScene(browser, "scene1_title");
+
+  const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:#1a202c;
+    width:1920px;height:1080px;
+    display:flex;flex-direction:column;
+    align-items:center;justify-content:center;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    overflow:hidden;
+  }
+  h1{color:#fff;font-size:96px;font-weight:700;letter-spacing:-2px;margin-bottom:24px}
+  p{color:#a0aec0;font-size:36px;font-weight:400}
+  .badge{
+    margin-top:48px;padding:8px 20px;
+    background:rgba(99,179,237,0.15);border:1px solid rgba(99,179,237,0.3);
+    border-radius:6px;color:#63b3ed;font-size:18px;
+  }
+</style>
+</head>
+<body>
+  <h1>VIGILANT</h1>
+  <p>Behavioral intelligence for Ring homes</p>
+  <div class="badge">Amazon Developer Hackathon</div>
+</body>
+</html>`;
+
+  await page.setContent(html, { waitUntil: "load" });
+  await sleep(15000);
+
+  return closeScene(ctx, "scene1_title");
+}
+
+/**
+ * Scene 8 — Close card (2:30–2:40, 10 s)
+ */
+async function recordScene8(browser: Browser) {
+  console.log("\n[Scene 8] Close card…");
+  const { ctx, page } = await openScene(browser, "scene8_close");
+
+  const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:#1a202c;
+    width:1920px;height:1080px;
+    display:flex;flex-direction:column;
+    align-items:center;justify-content:center;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    overflow:hidden;
+  }
+  h1{color:#fff;font-size:96px;font-weight:700;letter-spacing:-2px;margin-bottom:24px}
+  a{color:#63b3ed;font-size:32px;text-decoration:none;margin-bottom:16px;display:block}
+  p{color:#a0aec0;font-size:24px}
+</style>
+</head>
+<body>
+  <h1>VIGILANT</h1>
+  <a>github.com/shivangiS04/vigilant</a>
+  <p>Amazon Developer Hackathon — Open source</p>
+</body>
+</html>`;
+
+  await page.setContent(html, { waitUntil: "load" });
+  await sleep(10000);
+
+  return closeScene(ctx, "scene8_close");
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -358,13 +441,15 @@ async function main() {
 
   try {
     const clips = await Promise.all([]).then(async () => {
+      const c1 = await recordScene1(browser);
       const c2 = await recordScene2(browser);
       const c3 = await recordScene3(browser);
       const c4 = await recordScene4(browser);
       const c5 = await recordScene5(browser);
       const c6 = await recordScene6(browser);
       const c7 = await recordScene7(browser);
-      return [c2, c3, c4, c5, c6, c7];
+      const c8 = await recordScene8(browser);
+      return [c1, c2, c3, c4, c5, c6, c7, c8];
     });
 
     console.log("\n✓ All clips recorded:");

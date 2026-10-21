@@ -70,48 +70,20 @@ done
 echo "  Audio generation done."
 
 # ---------------------------------------------------------------------------
-# 2. Build title cards (scenes 1 and 8) as short video clips
+# 2. Title cards come from Playwright (scene1_title.webm, scene8_close.webm)
+#    — no ffmpeg drawtext needed (requires libfreetype which may not be built in)
 # ---------------------------------------------------------------------------
 
 echo ""
-echo "=== Step 2: Rendering title cards ==="
+echo "=== Step 2: Checking title card clips ==="
 
-# Scene 1 title card (15 s): dark background, VIGILANT wordmark, tagline
-if [[ ! -f "$CLIPS/scene1_title.mp4" ]]; then
-  ffmpeg -y \
-    -f lavfi -i "color=c=0x1a202c:size=${VIDEO_SIZE}:rate=${FPS}:duration=15" \
-    -vf "
-      drawtext=fontfile='${FONT_FILE}':text='VIGILANT':
-        fontcolor=white:fontsize=96:x=(w-text_w)/2:y=(h-text_h)/2-60:
-        enable='between(t,1,15)',
-      drawtext=fontfile='${FONT_FILE}':text='Behavioral intelligence for Ring homes':
-        fontcolor=0xa0aec0:fontsize=36:x=(w-text_w)/2:y=(h/2)+40:
-        enable='between(t,2,15)'
-    " \
-    -c:v libx264 -preset fast -crf 18 \
-    "$CLIPS/scene1_title.mp4"
-  echo "  scene1_title.mp4 created"
-fi
-
-# Scene 8 close card (10 s): same dark background, repo URL
-if [[ ! -f "$CLIPS/scene8_close.mp4" ]]; then
-  ffmpeg -y \
-    -f lavfi -i "color=c=0x1a202c:size=${VIDEO_SIZE}:rate=${FPS}:duration=10" \
-    -vf "
-      drawtext=fontfile='${FONT_FILE}':text='VIGILANT':
-        fontcolor=white:fontsize=96:x=(w-text_w)/2:y=(h-text_h)/2-60:
-        enable='between(t,0,10)',
-      drawtext=fontfile='${FONT_FILE}':text='github.com/shivangiS04/vigilant':
-        fontcolor=0x63b3ed:fontsize=32:x=(w-text_w)/2:y=(h/2)+40:
-        enable='between(t,1,10)',
-      drawtext=fontfile='${FONT_FILE}':text='Amazon Developer Hackathon':
-        fontcolor=0xa0aec0:fontsize=24:x=(w-text_w)/2:y=(h/2)+90:
-        enable='between(t,2,10)'
-    " \
-    -c:v libx264 -preset fast -crf 18 \
-    "$CLIPS/scene8_close.mp4"
-  echo "  scene8_close.mp4 created"
-fi
+for card in scene1_title scene8_close; do
+  if [[ -f "$CLIPS/${card}.webm" ]]; then
+    echo "  ${card}.webm ✓"
+  else
+    echo "  WARNING: $CLIPS/${card}.webm missing — re-run npx tsx demo/record.ts"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 3. Convert Playwright webm clips → mp4 (with padding to target duration)
@@ -148,12 +120,14 @@ convert_clip() {
   echo "  $name.mp4 (${dur}s)"
 }
 
-convert_clip scene2_dashboard     25
-convert_clip scene3_rapid_return  35
-convert_clip scene4_architecture  20
-convert_clip scene5_feedback      20
-convert_clip scene6_caretaking    20
-convert_clip scene7_analytics     15
+convert_clip scene1_title          15
+convert_clip scene2_dashboard      25
+convert_clip scene3_rapid_return   35
+convert_clip scene4_architecture   20
+convert_clip scene5_feedback       20
+convert_clip scene6_caretaking     20
+convert_clip scene7_analytics      15
+convert_clip scene8_close          10
 
 # ---------------------------------------------------------------------------
 # 4. Merge video clips + audio per scene → muxed scene files
