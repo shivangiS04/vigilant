@@ -1,0 +1,6 @@
+Here's why that matters. This morning, someone left through the front door
+and came back through the side door — eight minutes later.
+VIGILANT's MOTIF engine scored this pattern 6.4 out of 10 and flagged it.
+The engine uses four layers: novelty, adaptation, temporal weight, and competition —
+inspired by how the Drosophila fly filters sensory noise in real time.
+A sequence your home sees every day scores near zero. This one was new.

@@ -32,3 +32,11 @@ frontend/.vite/
 .vscode/
 .idea/
 .vercel
+
+# Demo video pipeline (Phase 4-6) — keep scripts in git, not the large outputs
+demo/output/
+demo/clips/
+demo/recordings/
+demo/voiceover/*.wav
+demo/voiceover/*.mp3
+demo/voiceover/*.m4a

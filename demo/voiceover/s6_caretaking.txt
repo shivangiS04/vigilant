@@ -1,0 +1,5 @@
+Here's the pattern we care most about for this demo.
+No activity at this home until 2:30 in the afternoon.
+VIGILANT flagged it as late first activity — a caretaking signal.
+If you're checking in on an elderly parent or a family member who lives alone,
+this is the alert that tells you something may be off.

@@ -1,0 +1,4 @@
+This is the VIGILANT dashboard. In the last seven days, Ring sent 91 events to this home.
+VIGILANT grouped them into 83 behavioral patterns and flagged just 27 that actually needed attention —
+suppressing 67% of the noise automatically.
+The seven-day chart shows your home's activity fingerprint at a glance.

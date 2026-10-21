@@ -897,11 +897,16 @@ def get_baseline_comparison(
 
 
 @app.get("/daily-summary")
-def get_daily_summary(home_id: str = Query("home_001")):
-    """One-day digest: event counts, flagged patterns, noise reduction, top alert."""
+def get_daily_summary(
+    home_id: str = Query("home_001"),
+    hours: int = Query(24, ge=1, le=168),
+):
+    """Digest: event counts, flagged patterns, noise reduction, top alert.
+    hours=24 → today; hours=168 → last 7 days (auto-fallback from frontend)."""
+    days = max(1, hours // 24)
     with get_db() as db:
-        events = repo.get_events(db, home_id, hours=24, limit=500)
-        patterns = repo.get_patterns(db, home_id, days=1)
+        events = repo.get_events(db, home_id, hours=hours, limit=500)
+        patterns = repo.get_patterns(db, home_id, days=days)
 
     total_events = len(events)
     flagged = [p for p in patterns if p.flagged]
@@ -917,7 +922,7 @@ def get_daily_summary(home_id: str = Query("home_001")):
     return {
         "home_id": home_id,
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "period_hours": 24,
+        "period_hours": hours,
         "total_events": total_events,
         "total_patterns": len(patterns),
         "flagged_count": len(flagged),
@@ -1030,6 +1035,42 @@ def clear_demo_data(
     return {"deleted_patterns": deleted_p, "deleted_events": deleted_e}
 
 
+@app.post("/demo/reset")
+def reset_demo_data(home_id: str = Query("home_001")):
+    """Simulator-only: wipe ALL data for this home (events, patterns, baselines, receipts)
+    and clear the in-memory MOTIF state so the demo can be re-seeded from scratch."""
+    if os.getenv("RING_INTEGRATION_MODE", "official").lower() != "simulator":
+        raise HTTPException(status_code=404, detail="Not found")
+    from backend.database.models import Baseline, RingWebhookReceipt, Camera
+    counts: dict = {}
+    with get_db() as db:
+        counts["events"] = db.query(RingEventModel).filter(RingEventModel.home_id == home_id).delete(synchronize_session=False)
+        counts["patterns"] = db.query(PatternModel).filter(PatternModel.home_id == home_id).delete(synchronize_session=False)
+        counts["baselines"] = db.query(Baseline).filter(Baseline.home_id == home_id).delete(synchronize_session=False)
+        # Receipts have no home_id — clear all to avoid dedup conflicts on re-seed
+        counts["receipts"] = db.query(RingWebhookReceipt).delete(synchronize_session=False)
+        # Remove simulator cameras (they'll be re-created on next event)
+        counts["cameras"] = db.query(Camera).filter(Camera.home_id == home_id).delete(synchronize_session=False)
+    # Reset in-memory MOTIF state
+    motif.baseline_patterns.clear()
+    motif.daily_events.clear()
+    # Also reset the pipeline's pending window so it starts clean
+    ring_pipeline._pending.clear()
+    return {"status": "reset", "home_id": home_id, "deleted": counts}
+
+
+@app.post("/demo/reset-daily")
+def reset_daily_state():
+    """Simulator-only: clear only the in-memory MOTIF daily_events window.
+    Call this between seeding historical data and sending today's demo events so
+    that late_first_activity detection sees today as a fresh day."""
+    if os.getenv("RING_INTEGRATION_MODE", "official").lower() != "simulator":
+        raise HTTPException(status_code=404, detail="Not found")
+    motif.daily_events.clear()
+    ring_pipeline._pending.clear()
+    return {"status": "ok", "cleared": "daily_events + pipeline window"}
+
+
 class FeedbackRequest(BaseModel):
     pattern_id: str
     feedback: str  # "normal" | "concerning"
@@ -1076,6 +1117,18 @@ def submit_pattern_feedback(pattern_id: str, req: FeedbackRequest):
 # ------------------------------------------------------------------
 
 def _pattern_to_dict(row) -> dict:
+    # Determine if this pattern came from the simulator or demo seed.
+    # We detect it from the RING_INTEGRATION_MODE env var and a pattern-level
+    # heuristic: if any event_id in the pattern was seeded (source="sample"
+    # or "simulator"), the pattern itself is from simulated data.
+    mode = os.getenv("RING_INTEGRATION_MODE", "official").lower()
+    is_simulated = mode == "simulator"
+
+    # Also detect stale [Sample] placeholder explanations so the frontend
+    # can choose to display them differently.
+    explanation = row.explanation
+    is_sample_placeholder = isinstance(explanation, str) and explanation.strip().startswith("[Sample]")
+
     return {
         "id": row.id,
         "pattern_type": row.pattern_type,
@@ -1083,7 +1136,9 @@ def _pattern_to_dict(row) -> dict:
         "novelty_score": row.novelty_score,
         "adaptation_score": row.adaptation_score,
         "flagged": row.flagged,
-        "explanation": row.explanation,
+        "explanation": explanation,
+        "is_sample_placeholder": is_sample_placeholder,
+        "source": "simulator" if is_simulated else "ring",
         "detected_at": row.detected_at.isoformat() if isinstance(row.detected_at, datetime) else row.detected_at,
         "event_count": len(row.event_ids) if row.event_ids else 0,
     }

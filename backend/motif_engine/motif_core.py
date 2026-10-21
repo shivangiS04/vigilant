@@ -241,17 +241,37 @@ class MotifEngine:
 
         # ── high-confidence structural matches first ──────────────────────
 
-        # rapid return: left then came back quickly (same primary camera, <15 min)
-        if len(events) >= 2 and cameras[0] == cameras[-1] and "person_detected" in types:
-            span = (events[-1].timestamp - events[0].timestamp).total_seconds() / 60
-            if span < 15:
-                return "rapid_return"
+        # caretaking / late_first_activity checked early: short span of motion-only events
+        # at a primary door when it is the first activity of the day (afternoon or later).
+        # Must come before loitering so 5× front_door motion doesn't fire loitering first.
+        local_h = _local_hour(events[0].timestamp)
+        span_hours = (events[-1].timestamp - events[0].timestamp).total_seconds() / 3600
+        if (
+            local_h >= 14
+            and span_hours < 1
+            and "person_detected" not in types[:2]
+            and cameras[0] in ("front_door", "side_door")
+            and self._is_first_activity_today(events[0].timestamp)
+        ):
+            return "late_first_activity"
 
-        # unusual entrance: person arrives on a non-primary camera first
+        # rapid return: person left (any primary door) and came back quickly on any door
+        if len(events) >= 2 and "person_detected" in types:
+            person_events = [e for e in events if e.type == "person_detected"]
+            if len(person_events) >= 2:
+                span = (person_events[-1].timestamp - person_events[0].timestamp).total_seconds() / 60
+                if span < 15:
+                    return "rapid_return"
+
+        # unusual entrance: person arrives on a non-primary camera first (exactly 1 person
+        # event so this doesn't get captured by rapid_return above)
         if cameras[0] in ("side_door", "back_door", "garage"):
             return "unusual_entrance"
 
-        # loitering: 3+ motion events without a clear departure
+        # loitering: 3+ motion events without a clear departure.
+        # late_first_activity is checked first, so by the time we reach here
+        # the caretaking condition (local hour ≥ 14, first event of day) has
+        # already been ruled out — this is safe to apply to any camera.
         motion_count = types.count("motion_detected")
         if motion_count >= 3:
             return "loitering"
@@ -269,23 +289,6 @@ class MotifEngine:
         # multiple cameras in short window
         if len(set(cameras)) >= 3:
             return "multi_camera_activity"
-
-        # caretaking — checked last because it needs context the engine tracks.
-        # Fires only when: this is the FIRST event of the day (nothing in
-        # daily_events within the last 18h for the same session), the local
-        # time is ≥ 14:00 (past expected wake time), the sequence is short
-        # (< 1 h span), and no person was detected in the opening events.
-        # This avoids triggering on normal afternoon motion at busy homes.
-        local_h = _local_hour(events[0].timestamp)
-        span_hours = (events[-1].timestamp - events[0].timestamp).total_seconds() / 3600
-        if (
-            local_h >= 14
-            and span_hours < 1
-            and "person_detected" not in types[:2]
-            and cameras[0] in ("front_door", "side_door")
-            and self._is_first_activity_today(events[0].timestamp)
-        ):
-            return "late_first_activity"
 
         return "standard_activity"
 

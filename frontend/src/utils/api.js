@@ -36,8 +36,8 @@ export const api = {
   getBaselineComparison: (homeId = "home_001", days = 7) =>
     get("/baseline-comparison", { home_id: homeId, days }),
 
-  getDailySummary: (homeId = "home_001") =>
-    get("/daily-summary", { home_id: homeId }),
+  getDailySummary: (homeId = "home_001", hours = 24) =>
+    get("/daily-summary", { home_id: homeId, hours }),
 
   getRingStatus: () => get("/ring/status"),
 

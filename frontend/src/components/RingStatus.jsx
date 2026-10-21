@@ -31,12 +31,12 @@ export function RingStatus() {
 
       <div style={styles.row}>
         <span style={styles.label}>Account</span>
-        <span style={dot(linked)} />
-        <span style={linked ? styles.ok : styles.warn}>
+        <span style={{ ...dot(linked), background: linked ? "#38a169" : "#a0aec0" }} />
+        <span style={linked ? styles.ok : styles.dim}>
           {linked
             ? `${status.linked_account_count} linked (${status.linked_accounts[0]?.account_identifier || "—"})`
             : status.account_link_configured
-              ? "Not yet linked — visit /ring to authorize"
+              ? "Account linking implemented; not linked in this demo"
               : "Account linking not configured"}
         </span>
       </div>
@@ -62,11 +62,18 @@ export function RingStatus() {
 
       {status.simulator_device_count > 0 && (
         <div style={styles.row}>
-          <span style={styles.label}>Sample data</span>
-          <span style={{ ...dot(false), background: "#ed8936" }} />
+          <span style={styles.label}>Simulator</span>
+          <span style={{ ...dot(true), background: "#ed8936" }} />
           <span style={styles.dim}>
-            {status.simulator_device_count} simulated camera{status.simulator_device_count !== 1 ? "s" : ""} in DB — not from Ring
+            {status.simulator_device_count} camera{status.simulator_device_count !== 1 ? "s" : ""} — events from signed simulator, same HMAC-verified code path as real Ring
           </span>
+        </div>
+      )}
+
+      {!linked && (
+        <div style={styles.demoNote}>
+          Events below come from the signed simulator. Webhooks are HMAC-signed and pass through the same
+          /ring/webhook verification, normalization, dedup and MOTIF pipeline as real Ring events.
         </div>
       )}
 
@@ -127,5 +134,15 @@ const styles = {
     borderRadius: 3,
     padding: "2px 6px",
     display: "inline-block",
+  },
+  demoNote: {
+    marginTop: 8,
+    padding: "6px 10px",
+    background: "#f0fff4",
+    border: "1px solid #c6f6d5",
+    borderRadius: 4,
+    fontSize: 12,
+    color: "#276749",
+    lineHeight: 1.5,
   },
 };

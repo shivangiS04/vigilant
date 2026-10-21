@@ -1,0 +1,4 @@
+Under the hood: Ring sends HMAC-signed webhooks. VIGILANT verifies the signature,
+normalises the payload, deduplicates events, and runs them through a sliding window of five.
+The MOTIF engine scores each window.
+High-salience patterns surface. Everything else is silently learned.

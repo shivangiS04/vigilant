@@ -16,12 +16,22 @@ export function DailySummary({ homeId = "home_001" }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [fallback7d, setFallback7d] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     const fetch = () =>
-      api.getDailySummary(homeId)
-        .then((res) => { if (mounted) { setData(res); setError(null); } })
+      api.getDailySummary(homeId, 24)
+        .then(async (res) => {
+          if (!mounted) return;
+          if (res.total_events === 0 && res.total_patterns === 0) {
+            // Today is empty — auto-switch to 7-day view
+            const res7 = await api.getDailySummary(homeId, 168);
+            if (mounted) { setData(res7); setFallback7d(true); setError(null); }
+          } else {
+            setData(res); setFallback7d(false); setError(null);
+          }
+        })
         .catch((err) => { if (mounted) setError(err.message); })
         .finally(() => { if (mounted) setLoading(false); });
 
@@ -48,7 +58,10 @@ export function DailySummary({ homeId = "home_001" }) {
   return (
     <div style={s.card}>
       <div style={s.header}>
-        <h3 style={s.title}>Today's Digest</h3>
+        <div>
+          <h3 style={s.title}>{fallback7d ? "Last 7 Days" : "Today's Digest"}</h3>
+          {fallback7d && <span style={s.fallbackNote}>No events today — showing last 7 days</span>}
+        </div>
         <span style={s.date}>{date}</span>
       </div>
 
@@ -106,7 +119,7 @@ export function DailySummary({ homeId = "home_001" }) {
       )}
 
       {total_patterns === 0 && (
-        <p style={s.muted}>No patterns detected in the last 24 hours.</p>
+        <p style={s.muted}>No patterns detected in the {fallback7d ? "last 7 days" : "last 24 hours"}.</p>
       )}
     </div>
   );
@@ -146,6 +159,7 @@ const s = {
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   title: { margin: 0, fontSize: 16, fontWeight: 700, color: "#1a202c" },
   date: { fontSize: 12, color: "#a0aec0" },
+  fallbackNote: { fontSize: 11, color: "#c05621", display: "block", marginTop: 2 },
   statRow: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 },
   stat: { display: "flex", flexDirection: "column", alignItems: "center", minWidth: 64 },
   statHighlight: { background: "#fff5f5", borderRadius: 6, padding: "4px 10px", border: "1px solid #fed7d7" },
