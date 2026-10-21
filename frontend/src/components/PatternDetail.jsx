@@ -22,6 +22,8 @@ export function PatternDetail({ pattern, onBack }) {
     { label: "Adaptation",  value: pattern.adaptation_score, desc: "How many times seen before" },
   ].filter((l) => l.value != null);
 
+  const isSimulated = pattern.source === "simulator";
+  const isPlaceholder = pattern.is_sample_placeholder;
   const explanationText = pattern.explanation;
 
   async function handleFeedback(choice) {
@@ -57,19 +59,28 @@ export function PatternDetail({ pattern, onBack }) {
           <span style={{ ...styles.salienceVal, color: scoreColor }}>{score.toFixed(1)}/10</span>
         </div>
 
-        {pattern.explanation ? (
-          <div style={styles.explanationBox}>
-            <div style={styles.explanationLabel}>EXPLANATION</div>
-            <p style={styles.explanation}>{explanationText}</p>
+        <div style={styles.explanationBox}>
+          <div style={styles.explanationLabelRow}>
+            <span style={styles.explanationLabel}>EXPLANATION</span>
+            {isSimulated && <span style={styles.simulatedBadge}>Simulated data</span>}
           </div>
-        ) : (
-          <div style={styles.explanationBox}>
-            <div style={styles.explanationLabel}>EXPLANATION</div>
+          {pattern.explanation && !isPlaceholder ? (
+            <p style={styles.explanation}>{explanationText}</p>
+          ) : isPlaceholder ? (
+            <>
+              <p style={{ ...styles.explanation, color: "#a0aec0", fontStyle: "normal", marginBottom: 6 }}>
+                {explanationText}
+              </p>
+              <p style={styles.placeholderNote}>
+                ⚠ This is a placeholder explanation. Re-seed data via /demo/seed to generate real explanations from MOTIF scores.
+              </p>
+            </>
+          ) : (
             <p style={{ ...styles.explanation, color: "#a0aec0", fontStyle: "normal" }}>
               No explanation available for this pattern.
             </p>
-          </div>
-        )}
+          )}
+        </div>
 
         {layers.length > 0 && (
           <div style={styles.layers}>
@@ -123,7 +134,7 @@ export function PatternDetail({ pattern, onBack }) {
           </div>
         )}
 
-        <div style={styles.meta}>{pattern.event_count} events in sequence</div>
+        <div style={styles.meta}>{pattern.event_count} event{pattern.event_count !== 1 ? "s" : ""} in sequence</div>
       </div>
     </div>
   );
@@ -152,9 +163,11 @@ const styles = {
     background: "#fff", border: "1px solid #e2e8f0",
     borderRadius: 6, padding: "12px 16px", marginBottom: 20,
   },
-  explanationLabel: { fontSize: 10, fontWeight: 700, color: "#a0aec0", letterSpacing: 1, marginBottom: 6 },
+  explanationLabelRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 },
+  explanationLabel: { fontSize: 10, fontWeight: 700, color: "#a0aec0", letterSpacing: 1 },
+  simulatedBadge: { fontSize: 10, fontWeight: 600, color: "#2b6cb0", background: "#ebf8ff", borderRadius: 3, padding: "1px 6px", border: "1px solid #bee3f8" },
   explanation: { margin: 0, fontSize: 15, color: "#2d3748", lineHeight: 1.6, fontStyle: "italic" },
-  sampleNote: { fontSize: 11, color: "#c05621", marginTop: 8, background: "#fffaf0", padding: "4px 8px", borderRadius: 3 },
+  placeholderNote: { margin: "6px 0 0", fontSize: 11, color: "#c05621", background: "#fffaf0", padding: "4px 8px", borderRadius: 3, fontStyle: "normal" },
   layers: { marginBottom: 16 },
   layersTitle: { fontSize: 10, fontWeight: 700, color: "#a0aec0", letterSpacing: 1, marginBottom: 10 },
   layerRow: { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 },

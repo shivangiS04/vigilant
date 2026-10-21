@@ -13,14 +13,14 @@ function NoiseReductionBanner({ patterns, events }) {
   const total = events.length;
   const flagged = patterns.filter((p) => p.flagged).length;
   const totalPatterns = patterns.length;
-  const suppressed = totalPatterns - flagged;
   const reductionPct = total > 0 ? Math.round(((total - flagged) / total) * 100) : null;
 
   return (
     <div style={bannerStyles.wrap}>
+      <span style={bannerStyles.window}>Last 7 days</span>
       <div style={bannerStyles.stat}>
         <span style={bannerStyles.num}>{total}</span>
-        <span style={bannerStyles.lbl}>raw events today</span>
+        <span style={bannerStyles.lbl}>raw events</span>
       </div>
       <div style={bannerStyles.arrow}>→</div>
       <div style={bannerStyles.stat}>
@@ -52,6 +52,14 @@ const bannerStyles = {
     padding: "12px 16px",
     marginBottom: 16,
     flexWrap: "wrap",
+  },
+  window: {
+    fontSize: 11,
+    fontWeight: 600,
+    color: "#a0aec0",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginRight: 4,
   },
   stat: { display: "flex", flexDirection: "column", alignItems: "center", minWidth: 80 },
   highlight: {
@@ -104,7 +112,7 @@ export default function App() {
   const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [selected, setSelected] = useState(null);
   const { patterns, loading: pLoading, error: pError, refresh } = usePatterns(HOME_ID, 7, flaggedOnly);
-  const { events } = useEvents(HOME_ID, 24);
+  const { events } = useEvents(HOME_ID, 168); // 7 days = 168 h, same window as patterns
 
   return (
     <div style={styles.app}>

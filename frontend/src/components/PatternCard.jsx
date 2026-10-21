@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 function SalienceBar({ score }) {
   const pct = (score / 10) * 100;
   const color = score >= 7 ? "#e53e3e" : score >= 4 ? "#dd6b20" : "#38a169";
@@ -9,6 +11,7 @@ function SalienceBar({ score }) {
 }
 
 export function PatternCard({ pattern, onSelect }) {
+  const [hovered, setHovered] = useState(false);
   const time = new Date(pattern.detected_at).toLocaleString([], {
     month: "short",
     day: "numeric",
@@ -18,11 +21,19 @@ export function PatternCard({ pattern, onSelect }) {
 
   const score = pattern.salience_score;
   const scoreColor = score >= 7 ? "#e53e3e" : score >= 4 ? "#dd6b20" : "#38a169";
+  const clickable = !!onSelect;
 
   return (
     <div
-      style={{ ...styles.card, borderLeft: pattern.flagged ? "4px solid #e53e3e" : "4px solid #eee", cursor: onSelect ? "pointer" : "default" }}
+      style={{
+        ...styles.card,
+        borderLeft: pattern.flagged ? "4px solid #e53e3e" : "4px solid #eee",
+        cursor: clickable ? "pointer" : "default",
+        ...(clickable && hovered ? styles.cardHover : {}),
+      }}
       onClick={() => onSelect && onSelect(pattern)}
+      onMouseEnter={() => clickable && setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <div style={styles.header}>
         <span style={styles.type}>{pattern.pattern_type.replace(/_/g, " ")}</span>
@@ -38,7 +49,12 @@ export function PatternCard({ pattern, onSelect }) {
       )}
 
       <div style={styles.footer}>
-        {pattern.event_count} events
+        <span>{pattern.event_count} event{pattern.event_count !== 1 ? "s" : ""}</span>
+        {clickable && (
+          <span style={{ ...styles.detailsLink, color: hovered ? "#2b6cb0" : "#a0aec0" }}>
+            Details →
+          </span>
+        )}
       </div>
     </div>
   );
@@ -99,7 +115,9 @@ const styles = {
     lineHeight: 1.5,
     fontStyle: "italic",
   },
-  footer: { fontSize: 12, color: "#aaa", marginTop: 4 },
+  footer: { fontSize: 12, color: "#aaa", marginTop: 4, display: "flex", justifyContent: "space-between", alignItems: "center" },
+  cardHover: { background: "#f0f4ff", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
+  detailsLink: { fontSize: 12, fontWeight: 600, transition: "color 0.15s" },
   state: { color: "#666", padding: 16 },
   stateError: { color: "#c00", padding: 16 },
 };

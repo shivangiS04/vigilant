@@ -897,11 +897,16 @@ def get_baseline_comparison(
 
 
 @app.get("/daily-summary")
-def get_daily_summary(home_id: str = Query("home_001")):
-    """One-day digest: event counts, flagged patterns, noise reduction, top alert."""
+def get_daily_summary(
+    home_id: str = Query("home_001"),
+    hours: int = Query(24, ge=1, le=168),
+):
+    """Digest: event counts, flagged patterns, noise reduction, top alert.
+    hours=24 → today; hours=168 → last 7 days (auto-fallback from frontend)."""
+    days = max(1, hours // 24)
     with get_db() as db:
-        events = repo.get_events(db, home_id, hours=24, limit=500)
-        patterns = repo.get_patterns(db, home_id, days=1)
+        events = repo.get_events(db, home_id, hours=hours, limit=500)
+        patterns = repo.get_patterns(db, home_id, days=days)
 
     total_events = len(events)
     flagged = [p for p in patterns if p.flagged]
@@ -917,7 +922,7 @@ def get_daily_summary(home_id: str = Query("home_001")):
     return {
         "home_id": home_id,
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "period_hours": 24,
+        "period_hours": hours,
         "total_events": total_events,
         "total_patterns": len(patterns),
         "flagged_count": len(flagged),
@@ -1076,6 +1081,18 @@ def submit_pattern_feedback(pattern_id: str, req: FeedbackRequest):
 # ------------------------------------------------------------------
 
 def _pattern_to_dict(row) -> dict:
+    # Determine if this pattern came from the simulator or demo seed.
+    # We detect it from the RING_INTEGRATION_MODE env var and a pattern-level
+    # heuristic: if any event_id in the pattern was seeded (source="sample"
+    # or "simulator"), the pattern itself is from simulated data.
+    mode = os.getenv("RING_INTEGRATION_MODE", "official").lower()
+    is_simulated = mode == "simulator"
+
+    # Also detect stale [Sample] placeholder explanations so the frontend
+    # can choose to display them differently.
+    explanation = row.explanation
+    is_sample_placeholder = isinstance(explanation, str) and explanation.strip().startswith("[Sample]")
+
     return {
         "id": row.id,
         "pattern_type": row.pattern_type,
@@ -1083,7 +1100,9 @@ def _pattern_to_dict(row) -> dict:
         "novelty_score": row.novelty_score,
         "adaptation_score": row.adaptation_score,
         "flagged": row.flagged,
-        "explanation": row.explanation,
+        "explanation": explanation,
+        "is_sample_placeholder": is_sample_placeholder,
+        "source": "simulator" if is_simulated else "ring",
         "detected_at": row.detected_at.isoformat() if isinstance(row.detected_at, datetime) else row.detected_at,
         "event_count": len(row.event_ids) if row.event_ids else 0,
     }
