@@ -25,6 +25,8 @@ export function PatternCard({ pattern, onSelect }) {
 
   return (
     <div
+      data-pattern-type={pattern.pattern_type}
+      data-pattern-id={pattern.id}
       style={{
         ...styles.card,
         borderLeft: pattern.flagged ? "4px solid #e53e3e" : "4px solid #eee",

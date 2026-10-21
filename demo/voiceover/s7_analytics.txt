@@ -1,0 +1,3 @@
+67% noise suppression. A learned baseline. Caretaking-aware alerts.
+VIGILANT turns your Ring camera feed into behavioral intelligence —
+without ever leaving your own backend.
