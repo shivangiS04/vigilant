@@ -268,12 +268,12 @@ class MotifEngine:
         if cameras[0] in ("side_door", "back_door", "garage"):
             return "unusual_entrance"
 
-        # loitering: 3+ motion events without a clear departure (primary cameras excluded
-        # to avoid misclassifying normal arrival sequences at the front door)
+        # loitering: 3+ motion events without a clear departure.
+        # late_first_activity is checked first, so by the time we reach here
+        # the caretaking condition (local hour ≥ 14, first event of day) has
+        # already been ruled out — this is safe to apply to any camera.
         motion_count = types.count("motion_detected")
-        if motion_count >= 3 and cameras[0] not in ("front_door", "side_door"):
-            return "loitering"
-        elif motion_count >= 5:   # very sustained motion anywhere is still loitering
+        if motion_count >= 3:
             return "loitering"
 
         # package delivery: vehicle then person sequence (structural match beats time-of-day)

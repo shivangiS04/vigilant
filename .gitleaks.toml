@@ -16,4 +16,7 @@
   paths = [
     # Submission docs are documentation, not config files
     '''submission/''',
+    # Demo scripts contain placeholder values shown in usage comments, not real secrets
+    '''demo/''',
+    '''scripts/demo_scenario\.py''',
   ]

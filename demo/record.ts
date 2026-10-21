@@ -13,7 +13,7 @@
  *   # Start frontend + backend first:
  *   #   cd frontend && npm run dev          (port 3000)
  *   #   DATABASE_URL=sqlite:///./demo.db RING_INTEGRATION_MODE=simulator \
- *   #     RING_HMAC_SIGNING_KEY=demo-key-32chars-vigilant-2026 \
+ *   #     RING_HMAC_SIGNING_KEY=<your-demo-hmac-key> \
  *   #     HOME_TIMEZONE=Asia/Kolkata uvicorn api.index:app --port 8001
  *   #   (run scripts/demo_scenario.py --reset first)
  *   #
