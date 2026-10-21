@@ -12,6 +12,9 @@
     '''<Neon connection''',
     # Docker example with hardcoded demo password
     '''POSTGRES_PASSWORD=vigilant''',
+    # Demo HMAC key — a hardcoded placeholder used only with the local signed
+    # simulator; it is not a credential for any real Ring or cloud service
+    '''demo-key-32chars''',
   ]
   paths = [
     # Submission docs are documentation, not config files
