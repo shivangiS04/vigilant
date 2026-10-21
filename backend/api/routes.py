@@ -1035,6 +1035,42 @@ def clear_demo_data(
     return {"deleted_patterns": deleted_p, "deleted_events": deleted_e}
 
 
+@app.post("/demo/reset")
+def reset_demo_data(home_id: str = Query("home_001")):
+    """Simulator-only: wipe ALL data for this home (events, patterns, baselines, receipts)
+    and clear the in-memory MOTIF state so the demo can be re-seeded from scratch."""
+    if os.getenv("RING_INTEGRATION_MODE", "official").lower() != "simulator":
+        raise HTTPException(status_code=404, detail="Not found")
+    from backend.database.models import Baseline, RingWebhookReceipt, Camera
+    counts: dict = {}
+    with get_db() as db:
+        counts["events"] = db.query(RingEventModel).filter(RingEventModel.home_id == home_id).delete(synchronize_session=False)
+        counts["patterns"] = db.query(PatternModel).filter(PatternModel.home_id == home_id).delete(synchronize_session=False)
+        counts["baselines"] = db.query(Baseline).filter(Baseline.home_id == home_id).delete(synchronize_session=False)
+        # Receipts have no home_id — clear all to avoid dedup conflicts on re-seed
+        counts["receipts"] = db.query(RingWebhookReceipt).delete(synchronize_session=False)
+        # Remove simulator cameras (they'll be re-created on next event)
+        counts["cameras"] = db.query(Camera).filter(Camera.home_id == home_id).delete(synchronize_session=False)
+    # Reset in-memory MOTIF state
+    motif.baseline_patterns.clear()
+    motif.daily_events.clear()
+    # Also reset the pipeline's pending window so it starts clean
+    ring_pipeline._pending.clear()
+    return {"status": "reset", "home_id": home_id, "deleted": counts}
+
+
+@app.post("/demo/reset-daily")
+def reset_daily_state():
+    """Simulator-only: clear only the in-memory MOTIF daily_events window.
+    Call this between seeding historical data and sending today's demo events so
+    that late_first_activity detection sees today as a fresh day."""
+    if os.getenv("RING_INTEGRATION_MODE", "official").lower() != "simulator":
+        raise HTTPException(status_code=404, detail="Not found")
+    motif.daily_events.clear()
+    ring_pipeline._pending.clear()
+    return {"status": "ok", "cleared": "daily_events + pipeline window"}
+
+
 class FeedbackRequest(BaseModel):
     pattern_id: str
     feedback: str  # "normal" | "concerning"
