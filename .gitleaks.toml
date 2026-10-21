@@ -1,5 +1,13 @@
 [allowlist]
   description = "Placeholder and redacted values in documentation"
+  # Commits that contain demo HMAC placeholder values in usage comments.
+  # These are not real credentials — the key only works with the local signed
+  # simulator and has no access to any Ring or cloud service.
+  commits = [
+    "e83b983648913486f518c80f83d020a8469ba441",
+    "cba8902c4ef56103a034f51e34d3f63327108bcd",
+    "0ee2beeb1c0da557741cd1fac122f0b67fd5bedd",
+  ]
   regexes = [
     # Values that are clearly placeholders, not real secrets
     '''\[REDACTED''',
